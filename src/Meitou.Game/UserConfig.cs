@@ -43,6 +43,8 @@ sealed class UserConfig
     public FloaterMode Floaters { get; set; } = FloaterMode.Simple;
     /// <summary>The original's splash at startup in the Faithful UI (Advanced settings: the switch's Faithful side), off by default; off, the menu shows as soon as the game has loaded.</summary>
     public bool SplashScreens { get; set; }
+    /// <summary>The folder of the last save Meitou wrote, which Continue loads; null until Meitou has saved (then the original's <c>continue</c> save).</summary>
+    public string? ContinueSave { get; set; }
     public bool MainMenuTransitions { get; set; } = true;
     public bool InGameTransitions { get; set; } = true;
     public float MainMenuTransitionSpeed { get; set; } = 1.5f;

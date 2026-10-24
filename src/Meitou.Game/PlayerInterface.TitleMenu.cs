@@ -202,10 +202,10 @@ sealed partial class PlayerInterface
         return new(left + minX, top + minY, maxX - minX + 1, maxY - minY + 1);
     }
 
-    /// <summary>The save card's lines, from the newest save: the squad, "Squad · Day N · Place" and "c.N · M members".</summary>
+    /// <summary>The save card's lines, from the save Continue loads: the squad, "Squad · Day N · Place" and "c.N · M members".</summary>
     (string Squad, string Line, string Meta) ContinueText()
     {
-        if (slots.FirstOrDefault() is not { } slot) return ("", "", "");
+        if (continueSlot is not { } slot) return ("", "", "");
         if (continueInfo.Folder != slot.Folder || continueInfo.Modified != slot.ModifiedUtc)
         {
             SaveSlotInfo? info = null;

@@ -103,8 +103,14 @@ behind it (the original loads a world only for a game; [engine](../engine.md) "L
 against French 1440-line screenshots. Every caption the code sets is the catalog's message upper-cased (boost::locale to_upper) unless noted.
 
 - **Title buttons**: "Continue", "New game", "Load game", "Import game", "Options", "Credits", "Exit". Each first closes the start, load and import
-  windows and the credits (`FUN_140914a90`); Load and Import close their own window when it is open, New game leaves its window as it is. Continue
-  shows only when the last save's `quick.save` exists. Version text: the literal "Kenshi 1.0.68 - x64 (Newland)" (Meitou: "Meitou - Faithful UI").
+  windows and the credits (`FUN_140914a90`); Load and Import close their own window when it is open, New game leaves its window as it is. Version
+  text: the literal "Kenshi 1.0.68 - x64 (Newland)" (Meitou: "Meitou - Faithful UI").
+- **Continue** (`FUN_140914c40`; `SaveManager` `FUN_14047af50`, `FUN_14036c5f0`, `FUN_14047d210`): the save named by `settings.cfg` `continue`
+  ([save.md](../formats/save.md)), the last save made; loading does not change it. Shown only when some save exists and
+  `<save folder>/<name>/quick.save` exists, decided once when the title is built. Pressed, it loads that save, unless its header cannot be read or
+  its version is below 0.99.0 (an empty or unparsable version counts as 0): then the button hides, and for the version the message box "Old save
+  version" says "Kenshi has been updated to version {1}...". Meitou: the last save Meitou wrote (`UserConfig.ContinueSave`), else the original's
+  `continue` save; the version text shows in the message panel, as Meitou has no one-button message box.
 - **Credits** (`FUN_140914230`, `FUN_140913880`): `data/credits.txt` read once, empty lines dropped, a "-" line a blank one, untranslated, in
   `CreditsPanelContent` (white, "HCenter Top"); the content starts 0.85 of `CreditsPanel`'s height down and moves up 25 px a second of wall-clock
   time, with no loop or stop. Credits again restarts it. `CreditsPanel` is a Widget skinned `Kenshi_EditBox`: its text box covers the panel, not

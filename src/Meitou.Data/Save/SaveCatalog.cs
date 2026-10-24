@@ -31,6 +31,29 @@ public static class SaveCatalog
         }
         return found.Values.OrderByDescending(s => s.ModifiedUtc).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
+    /// <summary>
+    /// The folder of the save the original's Continue loads: <c>settings.cfg</c> <c>continue</c> in the save folder <c>User save location</c> picks
+    /// (docs/formats/save.md); null without a <c>continue</c> name.
+    /// </summary>
+    public static string? OriginalContinue(Meitou.Content.GameInstall install)
+    {
+        var settings = install.ReadSettings();
+        if (settings.GetValueOrDefault("continue") is not { Length: > 0 } name) return null;
+        bool user = settings.TryGetValue("User save location", out var flag)
+            ? flag is not ("0" or "false" or "no")
+            : !(Directory.Exists(install.SaveDirectory) && Directory.EnumerateDirectories(install.SaveDirectory).Any(d => File.Exists(Path.Combine(d, SaveFolder.QuickSaveName))));
+        return Path.Combine(user ? Meitou.Content.GameInstall.UserSaveDirectory : install.SaveDirectory, name);
+    }
+
+    /// <summary>Whether the original loads a save of this version ("a.b.c", at least 0.99.0); an empty or unparsable version counts as 0.</summary>
+    public static bool LoadableVersion(string version)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(version, @"^\s*([+-]?\d+)\.\s*([+-]?\d+)\.\s*([+-]?\d+)");
+        uint code = m.Success && int.TryParse(m.Groups[1].Value, out int a) && int.TryParse(m.Groups[2].Value, out int b) && int.TryParse(m.Groups[3].Value, out int c)
+            ? (uint)(c | (b | a << 12) << 12) : 0;
+        return code >= 99u << 12;
+    }
+
     public static SaveSlotInfo ReadInfo(SaveSlot slot)
     {
         var game = new SaveGame(SaveFile.Read(File.ReadAllBytes(Path.Combine(slot.Folder, SaveFolder.QuickSaveName))));

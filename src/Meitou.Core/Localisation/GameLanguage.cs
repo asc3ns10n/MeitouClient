@@ -56,7 +56,7 @@ public sealed record GameLanguage(string Code, bool IsDefault, string? OverlayFo
     public static GameLanguage Detect(GameInstall install, IEnumerable<string> modFolders)
     {
         string localeRoot = Path.Combine(install.Root, "locale");
-        var settings = ReadSettings(Path.Combine(install.Root, "settings.cfg"));
+        var settings = install.ReadSettings();
         string code = Choose(settings.GetValueOrDefault("language") ?? "", settings.GetValueOrDefault("steam_language") ?? "", localeRoot);
         bool isDefault = code == DefaultCode;
         string? folder = isDefault ? null : Path.Combine(localeRoot, code);
@@ -115,21 +115,5 @@ public sealed record GameLanguage(string Code, bool IsDefault, string? OverlayFo
         if (SteamLanguages.Any(s => s.Code == language)) return language;
         if (language[0] != '_' && Directory.Exists(Path.Combine(localeRoot, language))) return language;
         return DefaultCode;
-    }
-
-    /// <summary>The <c>key=value</c> lines of settings.cfg (keys case-sensitive, values trimmed); empty when the file is missing.</summary>
-    static Dictionary<string, string> ReadSettings(string file)
-    {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        try
-        {
-            foreach (var line in File.ReadLines(file))
-            {
-                int eq = line.IndexOf('=');
-                if (eq > 0) result[line[..eq].Trim()] = line[(eq + 1)..].Trim();
-            }
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-        return result;
     }
 }

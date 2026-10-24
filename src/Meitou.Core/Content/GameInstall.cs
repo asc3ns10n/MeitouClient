@@ -17,6 +17,24 @@ public sealed class GameInstall
     public string DataDirectory => Path.Combine(Root, "data");
     public string ModsDirectory => Path.Combine(Root, "mods");
     public string SaveDirectory => Path.Combine(Root, "save");
+    /// <summary>The original's saves when <c>settings.cfg</c> <c>User save location</c> is on: <c>%LOCALAPPDATA%\kenshi\save</c> (docs/formats/save.md).</summary>
+    public static string UserSaveDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "kenshi", "save");
+
+    /// <summary>The <c>key=value</c> lines of the install's <c>settings.cfg</c> (keys case-sensitive, values trimmed); empty when the file is missing.</summary>
+    public Dictionary<string, string> ReadSettings()
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        try
+        {
+            foreach (var line in File.ReadLines(Path.Combine(Root, "settings.cfg")))
+            {
+                int eq = line.IndexOf('=');
+                if (eq > 0) result[line[..eq].Trim()] = line[(eq + 1)..].Trim();
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        return result;
+    }
 
     /// <summary>
     /// Steam workshop items of Kenshi (app 233860) in the same Steam library, if the install is a Steam one:

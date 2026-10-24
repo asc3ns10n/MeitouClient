@@ -14,6 +14,10 @@ sealed partial class PlayerInterface
     int startIndex;
     Func<IReadOnlyList<SaveSlot>> saveSlots = () => [];
     IReadOnlyList<SaveSlot> slots = [];
+    Func<string?> continueFolder = () => null;
+    /// <summary>The save Continue loads, when it is listed; hidden once a press found it unreadable or too old.</summary>
+    SaveSlot? continueSlot;
+    bool continueHidden;
     SaveSlot? selectedSlot;
     string slotDetails = "", credits = "";
     bool showCredits;
@@ -41,8 +45,9 @@ sealed partial class PlayerInterface
     Confirmation? confirmation;
     /// <summary>The game data (<see cref="ConfigureFrontend"/>; null without it).</summary>
     GameDatabase? gameData;
-    public void ConfigureFrontend(GameDatabase? database, Func<IReadOnlyList<SaveSlot>> enumerate, string creditsText)
+    public void ConfigureFrontend(GameDatabase? database, Func<IReadOnlyList<SaveSlot>> enumerate, string creditsText, Func<string?>? continueSave = null)
     {
+        continueFolder = continueSave ?? (() => null);
         gameData = database;
         starts =database is null ? [] : NewGameStart.LoadAll(database);
         startIndex = Math.Max(0, starts.ToList().FindIndex(s => s.Name == NewGameStart.DefaultName));
@@ -50,7 +55,7 @@ sealed partial class PlayerInterface
         // As the title reads data/credits.txt (FUN_14013d680, docs/game/ui-screens.md "Credits"): empty lines dropped, a "-" line a blank one, each line ended.
         credits = string.Concat(creditsText.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).Select(l => (l == "-" ? "" : l) + "\n"));
     }
-    public void ShowTitle() { faithfulScreens.Open("title"); RefreshSlots(); UpdateMenuPause(); }
+    public void ShowTitle() { faithfulScreens.Open("title"); continueHidden = false; RefreshSlots(); UpdateMenuPause(); }
     public bool TitleOpen => faithfulScreens.IsOpen("title");
     /// <summary>After leaving a game: title controls over the original image or the live world, according to UI mode.</summary>
     public void ShowMainMenu() => ShowTitle();
@@ -70,6 +75,9 @@ sealed partial class PlayerInterface
     {
         try { slots = saveSlots(); selectedSlot = slots.FirstOrDefault(); ReadSlotDetails(); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { slots = []; selectedSlot = null; slotDetails = e.Message; }
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        string? folder = continueFolder() is { Length: > 0 } f ? Path.GetFullPath(f) : null;
+        continueSlot = folder is null ? null : slots.FirstOrDefault(s => string.Equals(Path.GetFullPath(s.Folder), folder, comparison));
     }
     void ReadSlotDetails()
     {
@@ -85,6 +93,21 @@ sealed partial class PlayerInterface
             slotDetails = $"File version: {info.Version}\nFaction name: {info.Faction}\nFunds: c.{info.Funds.ToString("N0", CultureInfo.InvariantCulture)}\nMembers size: {info.Members}\nLocation: {info.Area}";
         }
         catch (Exception e) when (e is IOException or FormatException or ArgumentException) { slotDetails = "Unable to read save:\n" + e.Message; }
+    }
+    /// <summary>Loads the Continue save, or hides the button when its header is unreadable or its version too old (docs/game/ui-screens.md "Continue").</summary>
+    void ContinueGame()
+    {
+        if (continueSlot is not { } slot) return;
+        SaveSlotInfo info;
+        try { info = SaveCatalog.ReadInfo(slot); }
+        catch (Exception e) when (e is IOException or FormatException or ArgumentException or Meitou.Data.Fcs.FcsFormatException) { continueHidden = true; return; }
+        if (!SaveCatalog.LoadableVersion(info.Version))
+        {
+            continueHidden = true;
+            Notice(Loc.Tr("Kenshi has been updated to version {1}.\nThings have changed since this game was saved which will break everything horribly.\nUse the import menu to start a new game keeping your existing squad.", "1.0.68"), true);
+            return;
+        }
+        ScreenAction?.Invoke(new("load", "LoadButton", "load", slot.Folder));
     }
     /// <summary>The advanced options of the import window take the selected save's difficulty (<c>FUN_140912f80</c>, when the window is opened or a row selected while it is open); the import runs with what the sliders hold.</summary>
     void ReadSlotDifficulty()
@@ -120,7 +143,7 @@ sealed partial class PlayerInterface
                 case "ImportGameButton": if (!wasOpen) { advancedOpen = false; OpenSlots("import"); } break;
                 case "OptionsButton": ScreenAction?.Invoke(e); break;
                 case "CreditsButton": showCredits = true; creditsStart = System.Diagnostics.Stopwatch.GetTimestamp(); break;
-                case "ContinueButton": if (slots.FirstOrDefault() is { } last) ScreenAction?.Invoke(new("load", "LoadButton", "load", last.Folder)); break;
+                case "ContinueButton": ContinueGame(); break;
                 case "ExitButton": Confirm("EXIT", "Are you sure you want to exit?", () => ScreenAction?.Invoke(new("menu", "ExitGameButton", "exit"))); break;
                 // In play the Esc menu's Exit offers the main menu as well (engine choice: the original's in-game Exit dialog is not traced).
                 case "ExitGameButton":
@@ -229,10 +252,10 @@ sealed partial class PlayerInterface
             if (UiMode == UiMode.Meitou)
             {
                 b.Hidden.Add("ImportGameButton");
-                foreach (var (widget, at) in MenuLayout(card: slots.Count > 0 && slotReadable)) b.Positions[widget] = at;
+                foreach (var (widget, at) in MenuLayout(card: continueSlot is not null && !continueHidden)) b.Positions[widget] = at;
             }
-            // Continue is shown only when a save exists (docs/game/ui-screens.md section 3), not greyed out.
-            if (slots.Count > 0 && slotReadable) Enable("ContinueButton"); else b.Hidden.Add("ContinueButton");
+            // Continue is shown only while the last save made exists (docs/game/ui-screens.md "Continue"), not greyed out.
+            if (continueSlot is not null && !continueHidden) Enable("ContinueButton"); else b.Hidden.Add("ContinueButton");
             b.Properties["CreditsPanel"] = new Dictionary<string, string> { ["Visible"] = showCredits ? "true" : "false" };
             if (showCredits)
             {

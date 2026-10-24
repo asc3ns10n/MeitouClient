@@ -28,6 +28,8 @@ sealed partial class GameHost
     int worldEpoch;
     // Results of the write worker, shown on the next frame (the HUD is drawn by the main thread only).
     readonly ConcurrentQueue<(string Text, bool Error)> saveNotices = [];
+    // Folders the write worker saved, recorded on the next frame as the save Continue loads.
+    readonly ConcurrentQueue<string> savedFolders = [];
     IReadOnlyList<string>? saveDataFiles;
     // The save a capture starts from (a copy of the loaded one, or a new one from the data) costs tens of milliseconds and holds nothing of the world: it is made ahead on a worker,
     // so the capture at the tick boundary only reads the squad (a few ms). Stale (for another loaded save) after a load.
@@ -83,6 +85,7 @@ sealed partial class GameHost
     void HandleSaves()
     {
         while (saveNotices.TryDequeue(out var notice)) player.Notice(notice.Text, notice.Error);
+        while (savedFolders.TryDequeue(out var saved)) { config.ContinueSave = saved; config.Save(); }
         PrintSavedLog();
         if (quickSaveRequested) { quickSaveRequested = false; QuickSaveNow(); }
         if (quickLoadRequested) { quickLoadRequested = false; BeginQuickLoad(); }
@@ -143,6 +146,7 @@ sealed partial class GameHost
                 game.Write(folder);
                 Console.WriteLine($"save      {folder}: captured in {captureMs:0.0} ms{(ahead ? "" : " (the base made on the spot)")}, written in {written.ElapsedMilliseconds} ms");
                 saveNotices.Enqueue(("Saved", false));
+                savedFolders.Enqueue(Path.GetFullPath(folder));
             }
             catch (Exception e)
             {
