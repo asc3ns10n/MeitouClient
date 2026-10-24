@@ -119,9 +119,10 @@ against French 1440-line screenshots. Every caption the code sets is the catalog
 - **Exit** (`FUN_140914600`, message helper `FUN_140742130`): title "Exit", text "Are you sure you want to exit?", buttons Yes and Cancel, upper-cased;
   the helper translates its captions (Ok, Yes, No, Cancel, Abort) once into statics, and the French game shows "CANCEL" untranslated (**Observed**).
 - **Start window**: "Choose your beginning", "Advanced options", "Begin", "Cancel"; the start's name. A DatapanelGUI in `DescriptionPanel`:
-  "Difficulty:", "Cash:", "Play Style:" (not upper-cased) with the record's `difficulty`, "c."`money`, `style` as stored (French keeps "Default",
-  "RPG"), then `description` as a wrapped line. Rows: pitch 0.94 / max(1, (int)(40 x panel height / screen height)) of the panel, from 0.03 of
-  it; label at 3 % of the width, 96 % wide; value right-aligned in 93 %. First start "1980-gamedata.base" (Wanderer); the arrows wrap.
+  "Difficulty:", "Cash:", "Play Style:" (not upper-cased) with the record's `difficulty`, `money` through the catalog's "c.{1,num}" (a grouped
+  number, "c.1,000"), `style` as stored (French keeps "Default", "RPG"), then `description` as a wrapped line. Rows: pitch 0.94 / max(1, (int)(40 x
+  panel height / screen height)) of the panel, from 0.03 of it; label at 3 % of the width, 96 % wide; value right-aligned in 93 %. First start
+  "1980-gamedata.base" (Wanderer); the arrows wrap.
 - **Load, save, import**: title "Load game" / "Save game" / "Import game"; buttons "Load", "Save", "Import", "Cancel"; column headers "Name" (fill)
   and "Date" (180 screen pixels, so 1440-line dates are cut off) and "Reset squad positions", not upper-cased. Rows: every folder holding
   `quick.save`, its name as is; the date is the folder's last write in the user's short date and time with seconds; newest first, names compared

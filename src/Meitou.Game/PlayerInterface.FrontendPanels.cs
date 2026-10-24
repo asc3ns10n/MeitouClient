@@ -88,14 +88,14 @@ sealed partial class PlayerInterface
                 controls[i] = controls[i] with { Properties = new Dictionary<string, string>(controls[i].Properties) { ["TextColour"] = MainColour } };
     }
 
-    /// <summary>The start's lines (FUN_140916620): difficulty, cash, play style as the record has them (not translated), then its description.</summary>
+    /// <summary>The start's lines (FUN_140916620): difficulty and play style as the record has them (not translated), the cash as the catalog's <c>c.{1,num}</c> (a grouped number), then its description.</summary>
     void AddStartLines(List<UiControl> controls)
     {
         if (starts.Count == 0) return;
         var start = starts[startIndex];
         AddDatapanel(controls, "DescriptionPanel",
         [
-            (Loc.Tr("Difficulty:"), start.Difficulty), (Loc.Tr("Cash:"), "c." + start.Money.ToString(CultureInfo.InvariantCulture)), (Loc.Tr("Play Style:"), start.Style),
+            (Loc.Tr("Difficulty:"), start.Difficulty), (Loc.Tr("Cash:"), Loc.Tr("c.{1,num}", start.Money)), (Loc.Tr("Play Style:"), start.Style),
             (start.Description, ""),
         ], lastWraps: true, rows: 40);
     }
