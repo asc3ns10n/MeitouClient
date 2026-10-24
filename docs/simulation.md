@@ -1286,7 +1286,9 @@ while enemies come. A guard at its turret fires it ([Ranged](#ranged)).
 production/research, construction and nest density. Defaults are neutral (1); ranges follow
 [researched bindings](game/character-stats.md#new-game-advanced-options-that-change-these-mechanics).
 The two new-game panels share one modal screen; expanding raises the start panel, and its Begin/Cancel remain usable.
-Opening a fresh new-game dialog resets the draft; collapsing keeps it. Failed world replacement retains the running
+The panel shows the options in force, as the original's does (`NewGameOptionsWindow` `FUN_1409151d0` edits the global
+game options `DAT_142133578`, which a load overwrites): they stay as set while the start window closes and opens, and
+a load brings the save's. Failed world replacement retains the running
 world's options and body factory. Saves carry seven `meitou difficulty <key>` CAMERA floats (hunger, death, damage,
 production, research, building, nests). Missing/nonfinite values use 1; out-of-range values clamp to the slider range.
 These are Meitou extensions; original difficulty save encoding is not implemented here. Saves without the extensions

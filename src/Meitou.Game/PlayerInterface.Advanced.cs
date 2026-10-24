@@ -7,7 +7,7 @@ namespace Meitou.Game;
 
 sealed partial class PlayerInterface
 {
-    internal NewGameSettings NewGameOptions { get; private set; } = new();
+    internal NewGameSettings NewGameOptions { get; set; } = new();
     bool advancedOpen;
     /// <summary>The option whose help the panel shows: the last one under the pointer, kept while the panel is open (so the pointer can reach the help's scroll bar); -1: none.</summary>
     int advancedHelp = -1;

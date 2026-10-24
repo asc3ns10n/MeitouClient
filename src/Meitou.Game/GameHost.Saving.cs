@@ -264,6 +264,7 @@ sealed partial class GameHost
         }
         popData = nextData;
         difficulty = nextDifficulty;
+        player.NewGameOptions = difficulty;
         population = built.Population;
         aggro = built.Aggro;
         if (nav is not null) population!.ZoneGate = zone => nav.Walkability.World.Contains(zone);
