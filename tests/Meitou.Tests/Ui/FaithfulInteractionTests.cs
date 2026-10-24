@@ -68,16 +68,16 @@ public class FaithfulInteractionTests(ITestOutputHelper output)
             Assert.DoesNotContain(ui.UiFrame, c => c.Name == "advanced-track-0");
             Click(ui, "AdvancedButton");
             Assert.Equal(selectedHunger, ui.NewGameOptions[0]);
-            ui.UiKey(Key.Escape);
-            Assert.Contains(ui.UiFrame, c => c.Name == "BeginButton");
-            Assert.DoesNotContain(ui.UiFrame, c => c.Name == "advanced-track-0");
-            Click(ui, "AdvancedButton");
             MyGuiEvent? request = null; ui.ScreenAction += e => request = e;
             Click(ui, "BeginButton"); Assert.Equal("new-game", request?.Action);
             Assert.Equal(selectedHunger, ui.NewGameOptions[0]);
             Click(ui, "CancelButton");
             Assert.DoesNotContain(ui.UiFrame, c => c.Name == "advanced-track-0");
             Click(ui, "NewGameButton"); Assert.Equal(1, ui.NewGameOptions[0]);
+            Click(ui, "AdvancedButton"); ui.UiKey(Key.Escape);
+            Assert.DoesNotContain(ui.UiFrame, c => c.Name == "BeginButton");
+            Assert.DoesNotContain(ui.UiFrame, c => c.Name == "advanced-track-0");
+            Assert.Equal("new-game", request?.Action);
         }
         finally { ui.DisposeUi(); }
     }
@@ -106,10 +106,8 @@ public class FaithfulInteractionTests(ITestOutputHelper output)
             ui.ShowTitle(); Assert.True(session.Simulation.RequestedPause);
             Click(ui, "NewGameButton"); Assert.Contains(ui.UiFrame, c => c.Name == "BeginButton" && c.Enabled);
             Click(ui, "BeginButton"); Assert.Equal("new-game", request!.Action); Assert.False(session.World.Player.Exists);
-            ui.UiKey(Key.Escape); Click(ui, "ExitButton");
-            Assert.Contains(ui.UiFrame, c => c.Name == "ButtonA");
-            Click(ui, "ButtonB"); Assert.Equal("new-game", request.Action);
-            Click(ui, "ExitButton"); Click(ui, "ButtonA"); Assert.Equal("exit", request.Action);
+            ui.UiKey(Key.Escape); Assert.Equal("new-game", request.Action); Assert.DoesNotContain(ui.UiFrame, c => c.Name == "BeginButton");
+            Click(ui, "ExitButton"); Assert.DoesNotContain(ui.UiFrame, c => c.Name == "ButtonA"); Assert.Equal("exit", request.Action);
             ui.CloseFrontend(); Assert.False(session.Simulation.RequestedPause);
             // In play the Esc menu's Exit offers the main menu, quit and cancel.
             ui.UiKey(Key.Escape); Click(ui, "ExitGameButton"); Assert.Contains(ui.UiFrame, c => c.Name == "ButtonC" && c.Enabled);

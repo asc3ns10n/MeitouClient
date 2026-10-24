@@ -26,6 +26,13 @@ sealed partial class PlayerInterface
         if (key == Meitou.Engine.Input.Key.Escape && CloseContextMenu()) return true;
         if (key == Meitou.Engine.Input.Key.Escape)
         {
+            // The original's title: Esc closes every title window at once and quits when none was open (docs/game/ui-screens.md "Keys on the title").
+            if (UiMode == UiMode.Faithful && faithfulScreens.IsOpen("title") && !faithfulScreens.IsOpen("message"))
+            {
+                if (!CloseTitleWindows()) ScreenAction?.Invoke(new("menu", "ExitGameButton", "exit"));
+                UpdateMenuPause();
+                return true;
+            }
             if (advancedOpen && faithfulScreens.OpenScreens.LastOrDefault() == "new-game") { advancedOpen = false; return true; }
             if (faithfulScreens.IsOpen("title") && faithfulScreens.OpenScreens.Count == 1) { showCredits = false; return true; }
             // The editor stays under the game menu (the original's Esc in the editor; it has no cancel: CONFIRM closes it).

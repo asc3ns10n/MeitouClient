@@ -121,7 +121,10 @@ sealed partial class PlayerInterface
                 case "OptionsButton": ScreenAction?.Invoke(e); break;
                 case "CreditsButton": showCredits = true; creditsStart = System.Diagnostics.Stopwatch.GetTimestamp(); break;
                 case "ContinueButton": if (slots.FirstOrDefault() is { } last) ScreenAction?.Invoke(new("load", "LoadButton", "load", last.Folder)); break;
-                case "ExitButton": Confirm("EXIT", "Are you sure you want to exit?", () => ScreenAction?.Invoke(new("menu", "ExitGameButton", "exit"))); break;
+                case "ExitButton":
+                    if (UiMode == UiMode.Faithful) ScreenAction?.Invoke(new("menu", "ExitGameButton", "exit"));
+                    else Confirm("EXIT", "Are you sure you want to exit?", () => ScreenAction?.Invoke(new("menu", "ExitGameButton", "exit")));
+                    break;
                 // In play the Esc menu's Exit offers the main menu as well (engine choice: the original's in-game Exit dialog is not traced).
                 case "ExitGameButton":
                     Confirm("EXIT", session.World.Player.Exists ? "Return to the main menu or quit the game? Unsaved progress will be lost." : "Return to the main menu or quit the game?",
@@ -191,12 +194,14 @@ sealed partial class PlayerInterface
         }
         return false;
     }
-    /// <summary>The title's other windows and the credits closed (the original's FUN_140914a90, run by every title button).</summary>
-    void CloseTitleWindows()
+    /// <summary>The title's other windows and the credits closed (the original's FUN_140914a90); true when a window was open (the credits do not count).</summary>
+    bool CloseTitleWindows()
     {
-        foreach (string id in new[] { "new-game", "load", "import" }) faithfulScreens.Close(id);
+        bool closed = false;
+        foreach (string id in new[] { "new-game", "load", "import" }) { closed |= faithfulScreens.IsOpen(id); faithfulScreens.Close(id); }
         advancedOpen = false;
         showCredits = false;
+        return closed;
     }
 
     /// <summary>A caption the original sets from the catalog in upper case (boost::locale's to_upper of the translation).</summary>

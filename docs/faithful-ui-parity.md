@@ -39,6 +39,7 @@ Brought in line with a documented fact:
 | Save/load info panel | empty until a save is selected, then the seven lines of the original's data panel: Date, File version, Faction name, Funds, Members size, Location, Day ([Title screen and its windows](game/ui-screens.md#title-screen-and-its-windows)) | FUN_14047e390 / FUN_14047e780 |
 | Continue | hidden, not greyed, when no readable save exists | section 3 |
 | Esc on a message box | presses its last button (Return already pressed the first) | ui-input.md section 5 |
+| Title Exit and Esc | Exit quits without asking; Esc closes every title window at once and quits on a bare title | [title](game/ui-screens.md#title-screen-and-its-windows) |
 | T / Y | open the overview on Research / Craft (M on Map); faction has no default key | events 3..6, ui-input.md sections 4 and 6 |
 
 Engine choices that remain; the original is **Unknown** for each:

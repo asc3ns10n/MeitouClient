@@ -112,11 +112,13 @@ against French 1440-line screenshots. Every caption the code sets is the catalog
 - **Placement**: the start and import windows at 0.5, 0.05 of the screen (0.6, 0.05 for the start window from the in-game menu); the load and save
   windows centred, with the left edge at the screen's centre while the title exists; the advanced options under the start or import window.
   Those windows leave the title's buttons live (another button replaces them; Meitou: modal screens that pass clicks through, `MyGuiScreenHost.PassThrough`).
-  Esc closes the top window, else the credits (Meitou).
+- **Keys on the title** (key listener `FUN_14082b010`): without a message box, Esc closes every title window and the credits at once, as a button
+  does; when no window was open, Esc quits. Meitou mode: Esc closes the top window, else the credits.
 - **Advanced options help**: the last option whose name was under the pointer, kept while the panel is open (Meitou: the name column only, so the
   pointer can reach the help's bar down the right side); a text taller than the panel scrolls with a
   vertical bar (**Observed**).
-- **Exit** (`FUN_140914600`, message helper `FUN_140742130`): title "Exit", text "Are you sure you want to exit?", buttons Yes and Cancel, upper-cased;
+- **Exit** (`FUN_140915180`): the title's Exit closes its windows and quits without asking (Meitou mode asks first).
+- **Esc menu Exit** (`FUN_140914600`, an `EscMenu` answer; message helper `FUN_140742130`): title "Exit", text "Are you sure you want to exit?", buttons Yes and Cancel, upper-cased;
   the helper translates its captions (Ok, Yes, No, Cancel, Abort) once into statics, and the French game shows "CANCEL" untranslated (**Observed**).
 - **Start window**: "Choose your beginning", "Advanced options", "Begin", "Cancel"; the start's name. A DatapanelGUI in `DescriptionPanel`:
   "Difficulty:", "Cash:", "Play Style:" (not upper-cased) with the record's `difficulty`, "c."`money`, `style` as stored (French keeps "Default",
