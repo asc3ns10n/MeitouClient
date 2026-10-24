@@ -17,7 +17,9 @@ namespace Meitou.Game;
 sealed class LoadingScreen : IDisposable
 {
     readonly DebugOverlay overlay;
-    DebugOverlay? stamp;   // the original's LOADING... face (Kenshi_UI_Messages: MailartRubberstamp-Regular.ttf)
+    DebugOverlay? stamp;
+    /// <summary>The width of <c>Kenshi_UI.png</c>, the reference of the original's UI scale (1920 in the base game, and when it is unreadable).</summary>
+    float uiWidth = 1920;   // the original's LOADING... face (Kenshi_UI_Messages: MailartRubberstamp-Regular.ttf)
     readonly UiPainter? painter;
     readonly MyGuiResources? resources;
     readonly MyGuiLayout? layout;
@@ -85,7 +87,7 @@ sealed class LoadingScreen : IDisposable
             string[] groups = resources.Resources.TryGetValue(ImageSet, out var set) ? [.. set.Elements("Group").Select(g => (string?)g.Attribute("name")).OfType<string>()] : [];
             var painter = new UiPainter(overlay, resources, resolve);
             var stamp = resolve("MailartRubberstamp-Regular.ttf") is { } stampFile ? DebugOverlay.FromFont(overlay.Gpu, stampFile, 64) : null;
-            return new(overlay, painter, resources, layout, tips, pictures, groups) { stamp = stamp, Faithful = faithful };
+            return new(overlay, painter, resources, layout, tips, pictures, groups) { stamp = stamp, Faithful = faithful, uiWidth = PngWidth(resolve("Kenshi_UI.png")) ?? 1920 };
         }
         catch (Exception e) when (e is IOException or InvalidDataException or System.Xml.XmlException)
         {
@@ -95,6 +97,21 @@ sealed class LoadingScreen : IDisposable
     }
 
     const string ImageSet = "Kenshi_LoadingScreen";
+
+    /// <summary>A PNG file's width from its header (null when missing or unreadable).</summary>
+    static int? PngWidth(string? path)
+    {
+        if (path is null) return null;
+        try
+        {
+            Span<byte> header = stackalloc byte[24];
+            using var file = File.OpenRead(path);
+            file.ReadExactly(header);
+            int width = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header[16..]);
+            return header[12..16].SequenceEqual("IHDR"u8) && width > 0 ? width : null;
+        }
+        catch (IOException) { return null; }
+    }
 
     /// <summary>
     /// The non-empty lines of a tips file: by its byte order mark when it has one, else UTF-8 when it is valid UTF-8, else Windows-1252 (the French, German and
@@ -180,8 +197,8 @@ sealed class LoadingScreen : IDisposable
             && set.Element("Group")?.Attribute("size")?.Value.Split(' ') is [var w, var h]
             && float.TryParse(w, CultureInfo.InvariantCulture, out float imageWidth) && float.TryParse(h, CultureInfo.InvariantCulture, out float imageHeight) && imageHeight > 0)
         {
-            // The scale is Unknown (DAT_1421337ec, beside the UI scale DAT_1421337f0): taken as the UI scale, height / 1080 (engine choice).
-            int shownHeight = (int)Math.Min(imageHeight * (height / 1080f) * SplashSlides[splashSlide].Scale, height);
+            // The horizontal UI scale: screen width / the width of Kenshi_UI.png (docs/game/ui-screens.md "Splash").
+            int shownHeight = (int)Math.Min(imageHeight * (width / uiWidth) * SplashSlides[splashSlide].Scale, height);
             int shownWidth = (int)(imageWidth / imageHeight * shownHeight);
             var bounds = new UiRect((int)(width * 0.5f - shownWidth * 0.5f), (int)(height * 0.5f - shownHeight * 0.5f), shownWidth, shownHeight);
             var properties = new Dictionary<string, string>

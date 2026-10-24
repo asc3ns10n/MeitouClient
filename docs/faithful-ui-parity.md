@@ -40,6 +40,7 @@ Brought in line with a documented fact:
 | Continue | hidden, not greyed, when no readable save exists | section 3 |
 | Esc on a message box | presses its last button (Return already pressed the first) | ui-input.md section 5 |
 | T / Y | open the overview on Research / Craft (M on Map); faction has no default key | events 3..6, ui-input.md sections 4 and 6 |
+| Splash size | slide height scaled by screen width / the width of `Kenshi_UI.png` | [Splash](game/ui-screens.md#splash) |
 
 Engine choices that remain; the original is **Unknown** for each:
 

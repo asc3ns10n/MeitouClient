@@ -88,8 +88,9 @@ order, and all seven have translations. Runtime reads the template and translate
 slide, `Kenshi_Splash_Logos` then `Kenshi_Splash_LoFi` (`lofi.png`, 677 x 700), all hidden at first. A slide's height is the image height x `DAT_1421337ec` x a
 factor (100 for Logos, 0.7 for LoFi), capped at the screen height; its width keeps the image's aspect; it is centred (integer pixels). Each frame the current
 slide is shown with alpha min(1, 3 x seconds since it started); a press (any of four input flags) is remembered; once the slide has been drawn at alpha 1
-on more than three frames, a press or more than 4 s ends it: hidden at once (no fade out) and the next starts. `DAT_1421337ec` is **Unknown** (beside the
-UI scale `DAT_1421337f0`; Meitou takes height / 1080, which leaves Logos at the screen height either way).
+on more than three frames, a press or more than 4 s ends it: hidden at once (no fade out) and the next starts. `DAT_1421337ec` is screen width / the
+width of `Kenshi_UI.png`, 1920 in the base game (ForgottenGUI's scaling set-up `FUN_1406e3c30`), so the slide height follows the screen width
+(Logos still fills the height).
 
 Meitou plays it in the Faithful mode on a start that opens on the title, over the boot (`LoadingScreen.StartSplash`) when the Interface setting "Splash
 screens" (`UserConfig.SplashScreens`) is on its Faithful side (the default is Meitou: no splash), never in the Meitou mode; the loading screen shows if the boot outlasts it. The two slides take
