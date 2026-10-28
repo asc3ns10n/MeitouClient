@@ -486,7 +486,7 @@ public sealed partial class PopulationSystem : ITickSystem, IDisposable
         foreach (int id in state.Squads)
         {
             if (world.Squads.Find(id) is not { } squad) continue;
-            var stored = new StoredSquad { Name = squad.Name, HomeBuilding = squad.HomeBuilding, Shop = squad.Shop, NextHomeFillTick = squad.NextHomeFillTick, Package = squad.Ai?.Current?.Id, Ai = Saving.AiSave.Of(squad.Ai) ?? squad.SavedAi, Memory = Memory?.Take(squad.Id) };
+            var stored = new StoredSquad { Name = squad.Name, HomeBuilding = squad.HomeBuilding, Shop = squad.Shop, Package = squad.Ai?.Current?.Id, Ai = Saving.AiSave.Of(squad.Ai) ?? squad.SavedAi, Memory = Memory?.Take(squad.Id) };
             var at = Store(world, squad, stored);
             world.Squads.Remove(id);
             // A squad with no one alive left is declared dead, unless its template `regenerates` and its town lives: then it is made afresh next time (CM_REFRESH).
@@ -546,6 +546,7 @@ public sealed partial class PopulationSystem : ITickSystem, IDisposable
     {
         var site = data.Sites[town.Site];
         var state = states[town.Site];
+        bool replaced = state.Repopulate;
         state.Repopulate = false;
         float radius = site.Town.SizeRadius * site.Town.TownRadiusMult;
         // The town's doors, cages, containers and beds, once (they stay registered when the town unloads).
@@ -556,6 +557,7 @@ public sealed partial class PopulationSystem : ITickSystem, IDisposable
         foreach (var b in site.Buildings)
             if (b.Zone == site.Zone || !centres.Contains(b.Zone)) world.VisitedZones.Add(b.Zone);
         var centre = new Vector2(site.Position.X, site.Position.Z);
+        var homed = new List<Squad>();
         foreach (var made in town.Squads)
         {
             // A gate has no nodes and its origin is inside the wall, ~110 from the opening: its residents are made at their gate guard's post (engine choice).
@@ -563,16 +565,50 @@ public sealed partial class PopulationSystem : ITickSystem, IDisposable
                 && Ai.AiSystem.FrontOf(post) is var front ? made with { Position = new Vector2(front.X, front.Z), NearY = front.Y + SpotLift } : made;
             var squad = SpawnSquad(world, built, site, radius);
             state.Squads.Add(squad.Id);
+            if (squad.HomeBuilding is not null) homed.Add(squad);
             MakePrisoners(world, built, squad, site, radius, state);
             MakeSlaves(world, built, squad, site, radius, state);
         }
         if (town.Squads.Count > 0) MadeTown(world, town.Site, town.Squads.Where(s => s.Home is not null).Select(s => s.Members.Count));
         GiveArtifacts(world, town);
+        FillEmptyHomes(world, town, replaced);
+        // The homes are stocked once their squads are in, after the artifacts (the original fills at each squad's first activation, FUN_140583a10).
+        foreach (var squad in homed) FillHome?.Invoke(world, squad);
         int housed = town.Squads.Count(s => s.Home is not null);
         if (townLog.Count >= 256) townLog.RemoveAt(0);   // nobody reads it in a headless world
         townLog.Add($"{site.Town.Name}: {town.Squads.Count} squad(s), {town.Squads.Sum(s => s.Members.Count)} characters; {housed} at home in " +
             $"{town.Squads.Where(s => s.Home is not null).Select(s => s.Home).Distinct().Count()} of {site.Buildings.Count(b => b.CanHouse)} houses, {town.Squads.Count - housed} elsewhere" +
             (housed < town.Squads.Count ? $" ({string.Join(", ", town.Squads.Where(s => s.Home is null).Select(s => s.Plan.Template.Name))})" : ""));
+    }
+
+    /// <summary>The trade system's fill of a home whose squad came out with no one (<see cref="Trading.TradeSystem.FillEmpty"/>; null: none).</summary>
+    public Action<World, TownBuilding, SquadTemplate, int, int>? FillEmpty { get; set; }
+
+    /// <summary>The trade system's fill of a squad's home when the squad is made from its template (<see cref="Trading.TradeSystem.FillHome"/>; null: none).</summary>
+    public Action<World, Squad>? FillHome { get; set; }
+
+    /// <summary>The towns' zones whose homes were made this session (a town and a zone): a town made again there (one with no squads to hold it) fills nothing.</summary>
+    readonly HashSet<(int Site, ZoneCoordinate Zone)> populatedZones = [];
+
+    /// <summary>
+    /// The homes whose squad came out with no one (its template lists no members, or rolled none: <c>FUN_140583a10</c>) are filled, after the artifacts are given out
+    /// (docs/game/economy.md "Building shops"): only in a fresh zone, as the original makes residents only there (<c>FUN_1409fdbd0</c>), so not in one the loaded save has a
+    /// file of or the town was made in before, unless the town has just been replaced.
+    /// </summary>
+    void FillEmptyHomes(World world, BuiltTown town, bool replaced)
+    {
+        if (FillEmpty is not { } fill) return;
+        int townFaction = data.Sites[town.Site].Town.Faction is { } tf ? data.FactionIndex(tf) : -1;
+        int player = world.Player.Faction >= 0 ? world.Player.Faction : data.PlayerFaction;
+        foreach (var (b, t) in town.Unmanned)
+        {
+            if (!replaced && (populatedZones.Contains((town.Site, b.Zone)) || world.Saved?.Zones.Contains(b.Zone) == true)) continue;
+            // FUN_14057f820 skips a building of the player's faction (a bought one too).
+            if (world.Fixtures.OwnsBuilding(b.Key, player)) continue;
+            int faction = t.Faction is { } own && data.FactionIndex(own) is >= 0 and var fi ? fi : townFaction;
+            fill(world, b, t, town.Site, faction);
+        }
+        foreach (var (b, _) in town.Homes) populatedZones.Add((town.Site, b.Zone));
     }
 
     /// <summary>

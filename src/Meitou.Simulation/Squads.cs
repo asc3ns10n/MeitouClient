@@ -63,8 +63,6 @@ public sealed class Squad
     public long Money { get; set; }
     /// <summary>The squad's shop, when it is a trader (<see cref="Trading.TradeSystem"/>); null otherwise.</summary>
     public Trading.Shop? Shop { get; set; }
-    /// <summary>When a squad that is no trader but has <c>vendors</c> next fills its home's containers (<see cref="Trading.TradeSystem"/>). Not hashed and not saved: the containers are.</summary>
-    public long NextHomeFillTick { get; set; }
     /// <summary>The squad's AI packages and the one running (<see cref="Ai.AiSystem"/>); null for a squad the AI does not run.</summary>
     public Ai.Blackboard? Ai { get; set; }
     /// <summary>The dialogue-given AI a save or its stored state held, until the AI attaches a blackboard and applies it (then null).</summary>

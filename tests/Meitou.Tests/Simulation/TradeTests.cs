@@ -19,7 +19,10 @@ public class TradeTests
     /// Factions: Nameless (the player, 0), Traders (1). Towns: Trade Town (Traders, at the origin), Near Town (1000 away), Far Town (500000 away), a nest beside it. The faction's culture
     /// prices cloth at 200 %, the town's the katana at 150 % (and cloth not at all, so the faction's applies). <c>all trade goods</c> holds cloth.
     /// </summary>
-    internal static PopulationData Data(params FcsRecord[] extra)
+    internal static PopulationData Data(params FcsRecord[] extra) => Data(null, extra);
+
+    /// <summary>The same with <paramref name="buildings"/> placed in the towns (by instance id, e.g. "i-t1-t").</summary>
+    internal static PopulationData Data(IReadOnlyDictionary<string, List<TownBuilding>>? buildings, params FcsRecord[] extra)
     {
         var db = Db([
             Rec("p-t", FcsRecordType.FACTION, r => r.Name = "Nameless"),
@@ -38,7 +41,7 @@ public class TradeTests
             Rec("atg-t", FcsRecordType.VENDOR_LIST, r => { r.Name = Market.AllTradeGoods; r.References["items"] = [Ref("cloth-t", 100)]; }),
             .. extra]);
         TownPlacement At(string town, float x) => new("i-" + town, town, new Vector3(x, 0, 0), null);
-        return PopulationData.Create(db, [At("t1-t", 0), At("t2-t", 1000), At("t3-t", 500_000), At("n-t", 500_100)]);
+        return PopulationData.Create(db, [At("t1-t", 0), At("t2-t", 1000), At("t3-t", 500_000), At("n-t", 500_100)], buildings: buildings);
     }
 
 
@@ -79,20 +82,21 @@ public class TradeTests
     [Fact]
     public void A_housed_trader_sells_from_its_homes_merged_stock_containers_with_its_vendor_money_purse()
     {
-        using var b = new Bazaar();
-        var shopkeeper = b.Spawn("shopkeeper", new Vector2(10, 0), b.Data.FactionIndex("f-t"), false, "bshop-t");
-        TownFixture Box(string id, int function, int w, int h) => new(id, "box", false, Vector3.Zero, 0) { Function = function, StorageWidth = w, StorageHeight = h };
+        TownFixture Box(string id, int function, int w, int h) => new(id, "box-t", false, Vector3.Zero, 0) { Function = function, StorageWidth = w, StorageHeight = h };
         // Two stock containers (20 x 10 and 10 x 10); a cage and a chest of another function do not count.
         var home = new TownBuilding("shop", "shop", "Shop", Vector3.Zero, 0, true, false, [])
         {
             Fixtures = [Box("a", TownBuildings.ShopFunction, 20, 10), Box("b", TownBuildings.GeneralStorageFunction, 10, 10), Box("c", TownBuildings.CageFunction, 0, 0), Box("d", TownBuildings.RefineryFunction, 30, 30)],
         };
+        using var b = new Bazaar(new Dictionary<string, List<TownBuilding>> { ["i-t1-t"] = [home] },
+            Rec("box-t", FcsRecordType.BUILDING, r => { r.Bools["has inventory"] = true; r.Ints["itemtype limit"] = 4; }));
+        var shopkeeper = b.Spawn("shopkeeper", new Vector2(10, 0), b.Data.FactionIndex("f-t"), false, "bshop-t");
         b.SquadOf(shopkeeper).HomeBuilding = home;
         b.World.RunTicks(1);
         var shop = b.SquadOf(shopkeeper).Shop!;
         Assert.Equal(home.Key, shop.Building);
         Assert.Equal((20, 20), (shop.Stock.Width, shop.Stock.Height));   // the widest, the two side by side would not fit: a shelf each
-        Assert.InRange(b.SquadOf(shopkeeper).Money, 5000 - 2000 + 500, 5000 + 2000 + 500);   // vendor money +/- 0.4 x it, plus the money roll
+        Assert.InRange(b.SquadOf(shopkeeper).Money, 5000 - 2000, 5000 + 2000);   // vendor money +/- 0.4 x it (the money roll is not in it)
         Assert.InRange(shop.Stock.All().Sum(i => i.Quantity), 8, 12);
 
         // No stock container: a squad shop of 18 x 18.
@@ -107,14 +111,18 @@ public class TradeTests
         public SimWorld World { get; }
         public TradeSystem Trade { get; }
 
-        public Bazaar(params FcsRecord[] extra)
+        public Bazaar(params FcsRecord[] extra) : this(null, extra) { }
+
+        /// <summary>A world whose towns hold <paramref name="buildings"/>, their fixtures registered.</summary>
+        public Bazaar(IReadOnlyDictionary<string, List<TownBuilding>>? buildings, params FcsRecord[] extra)
         {
-            Data = TradeTests.Data([.. Shops, .. extra]);
+            Data = TradeTests.Data(buildings, [.. Shops, .. extra]);
             Trade = new TradeSystem(Data);
             var ground = new OpenGroundWalkability((_, _) => 150);   // above the water line
             World = new SimWorld(new WorldSettings { Seed = 3 }, ground, [new MovementSystem(new PathService(ground, true)), Trade]);
             World.Player.Faction = Data.PlayerFaction;
             World.Player.Money = 1000;
+            for (int site = 0; buildings is not null && site < Data.Sites.Count; site++) World.Fixtures.RegisterSite(World, Data, site);
         }
 
         public void Dispose() => World.Dispose();
@@ -150,7 +158,7 @@ public class TradeTests
         var shop = b.SquadOf(shopkeeper).Shop!;
         int units = shop.Stock.All().Sum(i => i.Quantity);
         Assert.InRange(units, 8, 12);                            // round(U(0.8, 1.2) x 10)
-        Assert.Equal(3000 + 500, b.SquadOf(shopkeeper).Money);   // a small stock is worth less than 12000: the floor, plus the money roll
+        Assert.Equal(3000, b.SquadOf(shopkeeper).Money);   // a small stock and the 500 cats are worth less than 12000: the floor
         Assert.Equal(1 + (long)(24 / BodySystem.HoursPerTick) - 1, shop.NextRestockTick);
 
         b.Say(new OpenTrade(hero, shopkeeper) { Tick = 0 });
@@ -164,7 +172,7 @@ public class TradeTests
         b.Say(new BuyItem(first.Token, 1) { Tick = 0, Section = "main", X = 3, Y = 2 });   // dropped on a pocket cell
         b.World.RunTicks(1);
         Assert.Equal(1000 - first.UnitPrice, b.World.Player.Money);
-        Assert.Equal(3500 + first.UnitPrice, b.SquadOf(shopkeeper).Money);
+        Assert.Equal(3000 + first.UnitPrice, b.SquadOf(shopkeeper).Money);
         Assert.Equal((1, 3, 2), b.Bag(hero).All().Select(i => (i.Quantity, i.X, i.Y)).Single());
 
         // Sell it back: the sell price (a trade item at full price, junk at half).

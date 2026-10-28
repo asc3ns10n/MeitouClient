@@ -424,7 +424,9 @@ Meitou: [ground items](../simulation.md#items-and-eating).
   resident and the built flag (`residents override` is read only after that). The bar squads come from the same table
   (`FUN_1409fcd20` calls it first and loops over its entry count), so they are empty too. Base data: 4 of the 22 faction-less TOWN
   records have residents (housecamp raider variants, Skinhouse overrides); they get none. Meitou: the helpers in `PopulationSystem.Build.cs`.
-- **When**: at zone populate (`FUN_140a0e760`) per non-player town, the zone's buildings sorted by handle serial (random-looking).
+- **When**: at zone populate (`FUN_140a0e760`) per non-player town, the zone's buildings sorted by handle serial (random-looking): a fresh zone's buildings as that zone first
+  loads (`FUN_1409fdbd0`, **Verified**), so a town spread over several zones is populated zone by zone. Meitou (engine choice): a town is made whole, all
+  its buildings at once, when its own zone (the centre's) is active, and not again once its pools are `started` or a save holds its squads (`PopulationSystem.Load`).
 - **Candidates**: buildings of the town ([membership](../formats/zones.md#town-membership)) with an `interior` reference, not player-owned, holding no residents template
   or the default one; walls (`links together`, a vfunc override) never, gates (`is wall gate`) only for entries naming
   `building`s. Level data agrees: 1946 walls, none with a resident.

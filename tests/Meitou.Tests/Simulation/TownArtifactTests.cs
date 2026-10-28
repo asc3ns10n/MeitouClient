@@ -32,6 +32,7 @@ public class TownArtifactTests
         var chest = SyntheticTown.Rec("chest-t", FcsRecordType.BUILDING, "Chest");
         chest.Bools["has lock"] = true;
         chest.Bools["has inventory"] = true;
+        chest.Ints["itemtype limit"] = 4;
         var house = SyntheticTown.Rec("house-t", FcsRecordType.BUILDING, "House");
         var book = SyntheticTown.Rec("book-t", FcsRecordType.ITEM, "Book");
         book.Ints["value"] = 100;
@@ -138,7 +139,7 @@ public class TownArtifactTests
         shop.NextRestockTick = world.Tick;
         world.RunTicks(30);
         Assert.True(shop.Fills > fills);
-        Assert.Equal(artifacts, shop.Stock.Items.Where(i => i.Unique));
+        Assert.Equivalent(artifacts, shop.Stock.Items.Where(i => i.Unique).ToList(), strict: true);   // the restock goes through the chests, so their order may change
         Assert.Equal(3000, squad.Money);   // 0.25 x two junk units, at least 3000
     }
 

@@ -38,6 +38,49 @@ public sealed record VendorList
     public static bool IsItemType(FcsRecordType t) => t is FcsRecordType.ITEM or FcsRecordType.WEAPON or FcsRecordType.ARMOUR or FcsRecordType.CROSSBOW
         or FcsRecordType.LIMB_REPLACEMENT or FcsRecordType.CONTAINER or FcsRecordType.MAP_ITEM;
 
+    /// <summary>
+    /// Adds what vendor list <paramref name="r"/> sells for a faction that forbids <paramref name="forbidden"/> (<c>FUN_140956ba0</c>, <b>Verified</b>; docs/game/economy.md "Building shops"):
+    /// to <paramref name="types"/> the kind of every list with entries (a missing record's too: <c>weapons</c> WEAPON, but only its entries some <c>weapon manufacturers</c>
+    /// entry's <c>weapon types</c> names; <c>items</c> ITEM, but not its forbidden entries; <c>armours</c> and <c>clothing</c> ARMOUR; <c>containers</c> CONTAINER; <c>crossbows</c>
+    /// CROSSBOW; <c>robotics</c> LIMB_REPLACEMENT; <c>maps</c> MAP_ITEM; the blueprint lists RESEARCH), and to <paramref name="items"/> each entry's record when it is of that kind.
+    /// </summary>
+    public static void Sold(GameDatabase db, GameRecord r, IReadOnlySet<string>? forbidden, ISet<FcsRecordType> types, ISet<string> items)
+    {
+        var named = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var m in r.GetReferences("weapon manufacturers"))
+            if (db.Find(m.TargetStringId) is { } maker)
+                foreach (var w in maker.GetReferences("weapon types")) named.Add(w.TargetStringId);
+        if (named.Count > 0)
+            foreach (var e in r.GetReferences("weapons"))
+                if (named.Contains(e.TargetStringId))
+                {
+                    if (db.Find(e.TargetStringId) is { Type: FcsRecordType.WEAPON }) items.Add(e.TargetStringId);
+                    types.Add(FcsRecordType.WEAPON);
+                }
+        foreach (var e in r.GetReferences("items"))
+        {
+            if (forbidden?.Contains(e.TargetStringId) == true) continue;
+            if (db.Find(e.TargetStringId) is { Type: FcsRecordType.ITEM }) items.Add(e.TargetStringId);
+            types.Add(FcsRecordType.ITEM);
+        }
+        void List(string list, FcsRecordType type, bool blueprint = false)
+        {
+            foreach (var e in r.GetReferences(list))
+            {
+                if (db.Find(blueprint ? e.TargetStringId + ".TECH.1" : e.TargetStringId) is { } target && target.Type == type) items.Add(target.StringId);
+                types.Add(type);
+            }
+        }
+        List("armours", FcsRecordType.ARMOUR);
+        List("clothing", FcsRecordType.ARMOUR);
+        List("containers", FcsRecordType.CONTAINER);
+        List("blueprints", FcsRecordType.RESEARCH);
+        List("crossbows", FcsRecordType.CROSSBOW);
+        List("robotics", FcsRecordType.LIMB_REPLACEMENT);
+        foreach (string list in GearBlueprintLists) List(list, FcsRecordType.RESEARCH, blueprint: true);
+        List("maps", FcsRecordType.MAP_ITEM);
+    }
+
     public static VendorList From(GameDatabase db, GameRecord r)
     {
         var entries = new List<VendorEntry>();

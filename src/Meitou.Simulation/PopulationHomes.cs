@@ -38,7 +38,7 @@ public sealed partial class PopulationSystem
     /// </list>
     /// </summary>
     List<TownBuilding> HouseResidents(TownSite site, List<RecordLink> table, FactionData? faction, int factionIndex, ulong seed, IWalkability walk,
-        List<BuiltSquad> squads, List<(TownBuilding Building, SquadTemplate Template)> homes)
+        List<BuiltSquad> squads, List<(TownBuilding Building, SquadTemplate Template)> homes, List<(TownBuilding Building, SquadTemplate Template)> unmanned)
     {
         string? player = data.PlayerFaction >= 0 ? data.Factions[data.PlayerFaction].Id : null;
         var order = site.Buildings.Where(b => b.CanHouse && (player is null || b.OwnerFactionId != player)).ToList();
@@ -116,6 +116,7 @@ public sealed partial class PopulationSystem
                 ulong key = Rng.Mix(SeedSalts.ResidentHome ^ (ulong)site.Index << 40 ^ (ulong)h << 12 ^ (uint)index);
                 var (at, nearY) = SpotIn(b, seed, key);
                 if (BuildOne(template, factionIndex, faction, key, seed, at) is { } one) squads.Add(one with { NearY = nearY, Home = b });
+                else unmanned.Add((b, template));   // no one made: the squad factory fills the home instead (FUN_140583a10)
             }
         }
         homes.AddRange(housed);

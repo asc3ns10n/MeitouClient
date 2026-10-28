@@ -103,6 +103,8 @@ public sealed class SavedPopulation
     public List<SavedNest> Nests { get; } = [];
     /// <summary>The save's town states (not nests) by their placement's instance id: the towns' pools come from them (<c>pop</c>, <c>popd</c>, <c>started</c>, ...).</summary>
     public Dictionary<string, FcsRecord> TownStates { get; } = new(StringComparer.Ordinal);
+    /// <summary>The zones the save has a file of, an import's left out: the original makes no residents in them (<c>FUN_1409fdbd0</c> runs for a fresh zone only).</summary>
+    public HashSet<Meitou.Data.World.ZoneCoordinate> Zones { get; } = [];
     /// <summary>Platoon names to their entry.</summary>
     public Dictionary<string, SavedPlatoon> ByName { get; } = new(StringComparer.Ordinal);
     /// <summary>The save's WAR_SAVESTATEs by FACTION id: the war managers read them at the first look (<see cref="WarSave"/>).</summary>

@@ -296,7 +296,7 @@ sealed partial class GameHost
             Stage("build", () =>
             {
                 if ((options & ImportOptions.ResetPositions) != 0 && nav is not null && read!.IsCompletedSuccessfully) SaveImport.PlaceOnGround(read.Result, nav.Walkability.GroundHeight);
-                return SwapInSave(read!, interactive: true, out summary, new SaveLoadOptions { Appearances = data.Appearances, ResetRelations = (options & ImportOptions.Relations) == 0 }, prepared);
+                return SwapInSave(read!, interactive: true, out summary, new SaveLoadOptions { Appearances = data.Appearances, ResetRelations = (options & ImportOptions.Relations) == 0, Imported = true }, prepared);
             }),
             Stage("finishing", () => { SettleNewWorld(); player.FollowSelected(); FinishLoadNotice(summary, imported: true); PauseAfterLoad(); return null; }));
     }

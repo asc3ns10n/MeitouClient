@@ -31,6 +31,25 @@ public sealed class ItemFactory(GameDatabase db, GameConstants constants, Func<M
     readonly Lazy<string?> moneyId = new(() => db.OfType(FcsRecordType.ITEM).Where(r => r.Name == Trading.Market.MoneyItemName)
         .Select(r => r.StringId).OrderBy(id => id, StringComparer.Ordinal).FirstOrDefault());
 
+    /// <summary>The ITEMs of <c>item function</c> 14 with a <c>value</c>, dearest first (<c>FUN_140165c10</c>; equal values the larger <c>stackable</c> first, then by id).</summary>
+    readonly Lazy<(string Id, int Value, int Stack)[]> moneyItems = new(() => [.. db.OfType(FcsRecordType.ITEM)
+        .Where(r => r.GetInt("item function") == 14 && r.GetInt("value") > 0).Select(r => (r.StringId, r.GetInt("value"), Math.Max(r.GetInt("stackable"), 1)))
+        .OrderByDescending(m => m.Item2).ThenByDescending(m => m.Item3).ThenBy(m => m.StringId, StringComparer.Ordinal)]);
+
+    /// <summary>Money items worth <paramref name="value"/> (<c>FUN_1401641d0</c>): as many of the dearest as fit, then the next, each in stacks of its <c>stackable</c>.</summary>
+    public List<ItemInstance> CreateItemsWorth(int value)
+    {
+        var made = new List<ItemInstance>();
+        foreach (var (id, unit, stack) in value > 0 ? moneyItems.Value : [])
+        {
+            int count = value / unit;
+            value -= count * unit;
+            for (int left = count; left > 0; left -= stack)
+                if (Create(id, Math.Min(left, stack)) is { } item) made.Add(item);
+        }
+        return made;
+    }
+
     /// <summary>
     /// CHARACTER <c>money item prob</c> / <c>min</c> / <c>max</c> for a newly made character not of the player's faction (<c>RootObjectFactory::process</c>, <b>Verified</b>): when a roll in
     /// [0, 1) is at most the prob (so the data's 80-100 always pass), a stack of the money item worth U[min, max] goes into the inventory; one that does not fit is lost.

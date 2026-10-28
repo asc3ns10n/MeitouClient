@@ -287,7 +287,6 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
                 TakeContents(world, squad.Shop);
                 Refill(world, squad, squad.Shop, template);
             }
-            else if (squad.HomeBuilding is { } home && HomeTemplateOf(squad.TemplateId) is { } contents && ShopFiller.VendorLinks(contents, FactionRecord(squad.Faction)).Count > 0) FillHome(world, squad, contents, home);
         }
     }
 
@@ -345,41 +344,80 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
     SquadTemplate? HomeTemplateOf(string id)
     {
         if (!homeTemplates.TryGetValue(id, out var t))
-            homeTemplates[id] = t = data.Db.Find(id) is { } r && SquadFactory.IsTemplate(r) && SquadTemplate.From(r) is { IsTrader: false } fill && (fill.Vendors.Count > 0 || fill.BuildingDesignation is 2 or 3 or 5 or 6 or 8 or 9 or 11) ? fill : null;
+            homeTemplates[id] = t = data.Db.Find(id) is { } r && SquadFactory.IsTemplate(r) && SquadTemplate.From(r) is { IsTrader: false } fill ? fill : null;
         return t;
     }
 
     /// <summary>
-    /// A housed squad with <c>vendors</c> that is no trader (a resident's <c>house contents</c>): the building filler fills its home's storage containers as a trader's (the squad factory
-    /// <c>FUN_140583a10</c> tests <c>vendors</c>, not <c>is trader</c>, <b>Observed</b>), unlocking them; here each unit goes into the first container with room and what fits nowhere is
-    /// lost. Engine choice: again every <c>vendors refresh time</c> hours, but only while the containers hold nothing but unique items (a loaded save keeps what they hold); the purse is not touched.
+    /// A housed squad that is no trader, when the population makes it from its template: when its template sells (<c>vendors</c>, item spawns by its building designation:
+    /// <c>FUN_140959420</c>; <c>special items</c> or <c>special map items</c>: <c>FUN_140953f60</c>), the squad factory <c>FUN_140583a10</c> fills its home with the building filler
+    /// (<see cref="FillBuilding"/>, with specials) and sets its purse. Not again: the timed restock is for <c>is trader</c> squads only (<c>FUN_1405003c0</c>,
+    /// <c>FUN_140387960</c>); a squad made afresh fills it again, one loaded with its characters does not.
     /// </summary>
-    void FillHome(World world, Squad squad, SquadTemplate template, Meitou.Data.World.TownBuilding home)
+    public void FillHome(World world, Squad squad)
     {
-        if (world.Tick < squad.NextHomeFillTick) return;
-        bool first = squad.NextHomeFillTick == 0;
-        squad.NextHomeFillTick = world.Tick + (long)(template.VendorsRefreshTime / BodySystem.HoursPerTick);
-        var boxes = new List<Locks.Fixture>();
-        foreach (var f in home.Fixtures)
-            if (f.HoldsShopStock && world.Fixtures.Find(f.Id) is { Contents: not null } box) boxes.Add(box);
-        if (boxes.Count == 0 || boxes.Any(b => b.Contents!.Items.Any(i => !i.Unique))) return;
-        if (Shop.ForBuilding(home, new Trader(squad.Town, squad.Faction, template.BuyMult, template.BuysStolen, template.BuysIllegal)) is not { } merged) return;
-        merged.Fills = (int)world.Tick;
-        ShopFiller.Fill(merged, template, Market(world), data, world.Seed, (ulong)squad.Id, specials: first);
-        foreach (var item in merged.Stock.Items)
-            foreach (var box in boxes)
-                if (box.Contents!.Add(item)) break;
-        foreach (var box in boxes)
-            if (box.Lock is { } l) l.Locked = false;
+        if (squad.HomeBuilding is not { } home || squad.Faction >= 0 && (squad.Faction == world.Player.Faction || squad.Faction == data.PlayerFaction)
+            || HomeTemplateOf(squad.TemplateId) is not { } template) return;
+        if (ShopFiller.VendorLinks(template, FactionRecord(squad.Faction)).Count == 0 && (data.Db.Find(template.Id) is not { } t
+            || t.GetReferences("special items").Count == 0 && t.GetReferences("special map items").Count == 0)) return;
+        var rng = new RandomStream(world.Seed, Rng.Mix((ulong)squad.Id ^ ((ulong)world.Tick << 40)), RngPurpose.Trade);
+        var terms = new Trader(squad.Town, squad.Faction, template.BuyMult, template.BuysStolen, template.BuysIllegal);
+        if (FillBuilding(world, home, template, terms, true, ref rng, out _, placeCats: true) is { } value) squad.Money = ShopFiller.BuildingPurse(template, value, 0, ref rng);
     }
+
+    /// <summary>
+    /// A building whose resident template has no characters (no <c>leader</c>, <c>squad</c>, <c>squad2</c>, <c>animals</c>, <c>animals2</c> or <c>choosefrom list</c>) but sells (<c>vendors</c>,
+    /// item spawns by its building designation, <c>special items</c> or <c>special map items</c>): the squad factory <c>FUN_140583a10</c> fills the building with the building filler, with
+    /// specials and no purse, when its squad is first activated; that squad, having no characters, is then dropped (<c>FUN_1409a7730</c>), so this happens once
+    /// (docs/game/economy.md "Building shops"). Called when the town makes its residents.
+    /// </summary>
+    public void FillEmpty(World world, Meitou.Data.World.TownBuilding home, SquadTemplate template, int site, int faction)
+    {
+        var record = (uint)faction < (uint)data.Factions.Count ? data.Db.Find(data.Factions[faction].Id) : null;
+        if (ShopFiller.VendorLinks(template, record).Count == 0 && (data.Db.Find(template.Id) is not { } t
+            || t.GetReferences("special items").Count == 0 && t.GetReferences("special map items").Count == 0)) return;
+        var rng = new RandomStream(world.Seed, Rng.StableHash(home.Key), RngPurpose.Trade);
+        FillBuilding(world, home, template, new Trader(site, faction), true, ref rng, out _, placeCats: true);
+    }
+
+    /// <summary>
+    /// The building filler (<see cref="BuildingFill"/>) on <paramref name="home"/>: the stock rolled for <paramref name="terms"/>, its money rolls as money items among it
+    /// (<paramref name="placeCats"/>, as the original does) or returned in <paramref name="cats"/>, the template's special items flagged unique when <paramref name="specials"/>. Items are
+    /// valued as <c>FUN_1407a8f90</c> for the trade window open now, if any. The value of what went in; null when no container takes the stock or none was rolled (the purse then stays).
+    /// </summary>
+    long? FillBuilding(World world, Meitou.Data.World.TownBuilding home, SquadTemplate template, Trader terms, bool specials, ref RandomStream rng, out long cats, bool placeCats = false)
+    {
+        var market = Market(world);
+        var (units, rolled) = ShopFiller.Roll(template, terms, market, data, ShopFiller.Count(template, ref rng, building: true), ref rng);
+        cats = rolled;
+        if (placeCats && rolled > 0)
+        {
+            units.AddRange(market.Items.CreateItemsWorth((int)rolled));
+            cats = 0;
+        }
+        var made = specials ? ShopFiller.Specials(template.Id, data.Db, market) : [];
+        foreach (var item in made) item.Unique = true;
+        var trading = Valuation(world);
+        var faction = (uint)terms.Faction < (uint)data.Factions.Count ? data.Db.Find(data.Factions[terms.Faction].Id) : null;
+        return BuildingFill.Fill(world, data.Db, home, template, faction, market.FactionCulture(terms.Faction)?.Forbidden, made, units, units.Count > 0 || rolled > 0,
+            item => market.UnitPrice(item, false, trading, -1), item => market.StackPrice(item, false, trading, -1), ref rng);
+    }
+
+    /// <summary>The trader an item's <c>FUN_1407a8f90</c> value is taken for: the open trade window's, else none (<c>FUN_14079e6d0</c> reads the window).</summary>
+    Trader Valuation(World world) => open && Resolve(world, out _, out _, out var shop) ? shop!.Terms : Trader.None;
 
     void Refill(World world, Squad squad, Shop shop, SquadTemplate template)
     {
-        squad.Money = ShopFiller.Fill(shop, template, Market(world), data, world.Seed, (ulong)squad.Id, specials: shop.Fills == 0);
-        // The building filler unlocks the stock containers it fills (FUN_14095b210).
         if (shop.Building is not null && squad.HomeBuilding is { } home)
-            foreach (var f in home.Fixtures)
-                if (f.HoldsShopStock && world.Fixtures.Find(f.Id)?.Lock is { } l) l.Locked = false;
+        {
+            // The stock is the containers' (FUN_140953850): it goes back into them, the building filler fills them and the shop takes them up again.
+            var rng = new RandomStream(world.Seed, Rng.Mix((ulong)squad.Id ^ ((ulong)shop.Fills << 40)), RngPurpose.Trade);
+            bool first = shop.Fills++ == 0;
+            GiveBack(world, shop, all: true);
+            if (FillBuilding(world, home, template, shop.Terms, first, ref rng, out long cats) is { } value) squad.Money = ShopFiller.BuildingPurse(template, value, cats, ref rng);
+            TakeContents(world, shop);
+        }
+        else if (ShopFiller.Fill(shop, template, Market(world), data, world.Seed, (ulong)squad.Id, Valuation(world)) is { } purse) squad.Money = purse;
         shop.NextRestockTick = world.Tick + (long)(template.VendorsRefreshTime / BodySystem.HoursPerTick);
     }
 

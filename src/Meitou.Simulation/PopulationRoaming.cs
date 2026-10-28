@@ -405,7 +405,6 @@ public sealed partial class PopulationSystem
                 stored.Shop = squad.Shop;
                 stored.Ai = Saving.AiSave.Of(squad.Ai) ?? squad.SavedAi;
                 stored.Memory = Memory?.Take(squad.Id);
-                stored.NextHomeFillTick = squad.NextHomeFillTick;
                 stored.Package = p.Package = squad.Ai?.Current?.Id ?? stored.Package;
                 p.Position = Store(world, squad, stored);
             }

@@ -277,6 +277,11 @@ public sealed partial class PopulationSystem
         }
         var squad = SpawnSquad(world, built with { Home = home }, site, radius, platoonId: fresh.Id, pinned: true);
         squad.Money = p.Money;
+        if (home is not null)
+        {
+            world.Fixtures.RegisterSite(world, data, p.Origin);
+            FillHome?.Invoke(world, squad);   // made afresh: the squad factory fills its home again
+        }
         fresh.SquadId = squad.Id;
         world.Platoons.Add(fresh);
         Despawn(world, p, release: false);   // its uniques were freed above and the fresh squad holds them

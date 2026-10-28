@@ -41,7 +41,9 @@ public sealed partial class PopulationSystem
     /// <param name="Home">The building its town gave it as its home; null: none.</param>
     internal sealed record BuiltSquad(SquadPlan Plan, Vector2 Position, int Faction, List<BuiltMember> Members, float? NearY = null, TownBuilding? Home = null);
     /// <param name="Homes">The town's buildings with the template housed in each (those whose template makes no squad too), for the artifacts.</param>
-    sealed record BuiltTown(int Site, long LoadId, List<BuiltSquad> Squads, List<(TownBuilding Building, SquadTemplate Template)> Homes);
+    /// <param name="Unmanned">The squads of a home (its template's or a housemate's) that came out with no one, with their home: they fill it instead (<see cref="FillEmptyHomes"/>).</param>
+    sealed record BuiltTown(int Site, long LoadId, List<BuiltSquad> Squads, List<(TownBuilding Building, SquadTemplate Template)> Homes,
+        List<(TownBuilding Building, SquadTemplate Template)> Unmanned);
 
     /// <summary>
     /// The town's residents and bar squads. <paramref name="held"/>: a loaded save holds squads of the town (its pinned saved platoons), which are then its whole
@@ -49,16 +51,17 @@ public sealed partial class PopulationSystem
     /// </summary>
     BuiltTown BuildTown(TownSite site, long loadId, ulong seed, IWalkability walk, bool held = false)
     {
-        if (held) return new BuiltTown(site.Index, loadId, [], []);
+        if (held) return new BuiltTown(site.Index, loadId, [], [], []);
         var town = site.Town;
         int factionIndex = town.Faction is { } fid ? data.FactionIndex(fid) : -1;
         var faction = factionIndex >= 0 ? data.Factions[factionIndex] : null;
         var squads = new List<BuiltSquad>();
         var homes = new List<(TownBuilding, SquadTemplate)>();
+        var unmanned = new List<(TownBuilding, SquadTemplate)>();
         var entries = ResidentEntries(town, faction);
         List<TownBuilding>? bars = null;
         if (site.Buildings.Any(b => b.CanHouse))
-            bars = HouseResidents(site, entries, faction, factionIndex, seed, walk, squads, homes);
+            bars = HouseResidents(site, entries, faction, factionIndex, seed, walk, squads, homes, unmanned);
         else
         {
             // No building data (headless worlds): every entry's squads at spots round the centre (engine choice).
@@ -91,7 +94,7 @@ public sealed partial class PopulationSystem
                 else if (BuildOne(template, factionIndex, faction, key, seed, Place(site, seed, key, walk)) is { } one) squads.Add(one);
             }
         }
-        return new BuiltTown(site.Index, loadId, squads, homes);
+        return new BuiltTown(site.Index, loadId, squads, homes, unmanned);
     }
 
     /// <summary>The original's per-cent constant, the double nearest the float 0.01 (<c>0x141748288</c>), so exact products like 100 x 0.5 x 4 fall just under their integer as there.</summary>

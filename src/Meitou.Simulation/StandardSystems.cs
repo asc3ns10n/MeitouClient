@@ -243,6 +243,7 @@ public static class StandardSystems
         {
             systems.Add(trade = new Meitou.Simulation.Trading.TradeSystem(data, o.Trade));
             trade.Crimes = crime;
+            if (population is not null) (population.FillEmpty, population.FillHome) = (trade.FillEmpty, trade.FillHome);
         }
         Meitou.Simulation.Dialogue.DialogueSystem? talk = null;
         if (Has(StandardParts.Dialogue)) systems.Add(talk = new Meitou.Simulation.Dialogue.DialogueSystem(data, o.Dialogue, population));

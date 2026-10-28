@@ -106,8 +106,6 @@ public sealed class StoredSquad
     public bool Pinned { get; init; } = true;
     public Meitou.Data.World.TownBuilding? HomeBuilding { get; init; }
     public Trading.Shop? Shop { get; set; }
-    /// <summary>The squad's <see cref="Squad.NextHomeFillTick"/>, so an emptied home is not refilled when it comes back.</summary>
-    public long NextHomeFillTick { get; set; }
     /// <summary>The AI package it ran (saved as <c>currentPackage</c>; null: none).</summary>
     public string? Package { get; set; }
     /// <summary>Its contract and <c>change AI</c> (<see cref="Saving.AiSave"/>; null: none).</summary>

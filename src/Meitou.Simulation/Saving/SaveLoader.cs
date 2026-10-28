@@ -21,6 +21,9 @@ public sealed class SaveLoadOptions
     /// </summary>
     public bool ResetRelations { get; init; }
 
+    /// <summary>An imported game: its zones count as fresh, as the original's <c>imported</c> zones do (docs/formats/save.md "Importing a game"), so their towns' homes are made anew.</summary>
+    public bool Imported { get; init; }
+
     /// <summary>
     /// Make the save's other platoons (not the player's) <see cref="Platoon"/> stand-ins in <see cref="World.Platoons"/>, at their saved positions, when they belong to a placed
     /// town: the population makes their saved characters when a zone near them is active (<see cref="SavedPlatoon"/>; town-bound ones are pinned to their town).
@@ -109,6 +112,7 @@ public static class SaveLoader
             Handles = handles, InstanceOf = instanceOf, Appearances = options.Appearances, Clock = loaded.Clock, PlayerFaction = playerIndex,
         };
         world.Saved = context;
+        if (!options.Imported) context.Zones.UnionWith(save.Zones.Keys);
         context.Memory = world.Systems.OfType<Dialogue.DialogueSystem>().FirstOrDefault()?.Memory;
         ReadNests(save, data, context);
         foreach (var town in save.Towns)

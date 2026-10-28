@@ -29,9 +29,9 @@ internal static class ShopSave
     {
         if (!platoon.Strings.TryGetValue(StockKey, out var text)) return null;
         if (data.Db.Find(squad.TemplateId) is not { } record || !SquadFactory.IsTemplate(record) || SquadTemplate.From(record) is not { HasShop: true } template) return null;
-        // As the trade system makes it: a housed trader making no prisoner or slave squads has a building shop when its home has stock containers.
+        // As the trade system makes it: a housed trader has a building shop when its home has stock containers.
         var terms = new Trader(squad.Town, squad.Faction, template.BuyMult, template.BuysStolen, template.BuysIllegal);
-        var shop = (squad.HomeBuilding is { } home && template.Prisoners.Count == 0 && template.Slaves.Count == 0 ? Shop.ForBuilding(home, terms) : null) ?? new Shop { Terms = terms };
+        var shop = (squad.HomeBuilding is { } home ? Shop.ForBuilding(home, terms) : null) ?? new Shop { Terms = terms };
         ContainerSave.Read(text, shop.Stock, data.Items);
         shop.Fills = platoon.Ints.GetValueOrDefault(FillsKey);
         double hours = platoon.Floats.GetValueOrDefault(RefreshKey);

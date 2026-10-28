@@ -123,22 +123,56 @@ Goal 118/119 shoppers: the sale is `FUN_14074a630`, called by [`FUN_1409a14b0`](
   stock only for `is trader`; a home building (0) never makes a squad stock, it fills the home's containers (`FUN_14095b9d0`) and returns, retried next update, when the building or its interior is missing. So a housed
   trader with prisoners stocks its home like one without (Meitou `TradeSystem.Stock`; **Unknown**: what the filler does for a building with no containers, so Meitou keeps a squad shop for it).
   A faction test (`+0x250 == 0`, meaning **Unknown**) gates both. So a resident without `is trader` (e.g. `flotsam refuge`, vendors `house contents`) gets its home's containers stocked.
-- **Restock** (`ActivePlatoon::vfunc_4` calls `FUN_1404ff5e0(platoon, 0)` once `inventory refresh time` passes): the home branch skips a building whose interior object's `+0x10` is set
-  (meaning **Unknown**); the first fill passes 1 and never skips.
-- Meitou, non-traders (`TradeSystem.FillHome`, engine choices): the stock rolls as a building shop's, then each unit goes into the first stock container with room (their own grids and
-  stack bonus), what fits nowhere is lost, the containers are unlocked, the purse is untouched; refilled every `vendors refresh time` only while the containers hold nothing but unique items ([artifacts](#artifacts)).
-- **Containers** (`FUN_1409562f0`): the home's interior objects whose functionality is 2 BF_RESOURCE_STORAGE, 9 BF_SHOP or 13 BF_GENERAL_STORAGE and that have an inventory.
-  The filler unlocks their locks, sorts them (key **Unknown**), optionally clears them, puts special items first, then the vendor items; what fits nowhere is destroyed.
+- **No members** (`FUN_140583a10`, **Verified**): a template with no `leader`, `squad`, `squad2`, `animals`, `animals2` or `choosefrom list` makes no squad; with a home, and vendor lists or
+  item spawns (`FUN_140959640`) or `special items` / `special map items` (`FUN_140953440`), it fills the home with `FUN_14095b210` (clearing, with specials, no purse); so does a
+  housed squad, the template's or a housemate's, that sells but whose member rolls all come to 0 (the end of `FUN_140583a10`). It runs when the
+  unloaded squad `FUN_14057f820` made for the building is first activated (`FUN_1404ffad0`, while its never-activated flag is set, which `FUN_1407ee2d0` sets); that squad, empty,
+  then loses its persistence (`FUN_1409a7730`: the whole squad is down and it has no leader) and is destroyed (`FUN_1406bab60`). Only
+  `FUN_1409370d0` makes it again, which runs for the buildings of a zone with no zone file yet (`FUN_1409fdbd0`), so such a home is filled
+  once. Base game: e.g. Generators, ghost bar, lost library, Flotsam safehouse; a town housing only such templates and no housemates (Ghost Village) makes no squad at all. Meitou (`TradeSystem.FillEmpty`, for every home squad `BuildOne` makes no one of): when the town makes its residents, after the
+  artifacts, for its homes in a zone the loaded save has no file of (an import's zones count as fresh, as the original's `imported` ones) and the town was not made in before (a
+  replaced town's are filled again, its zone being reset). Gaps from Meitou making a town whole, not zone by zone ([town residents](factions-squads-towns.md#town-residents)): a home in a zone a Meitou save
+  has a file of from before its town was made (the player was there, the town's centre was not loaded) is never filled; a town a save holds squads of makes no homes on load, so
+  its buildings with no residents in zones without a file are not filled (the original fills them when such a zone loads); one with no squads fills them again, e.g. in another town's
+  centre zone, for which a save writes no file until that zone is visited.
+- **Restock** (`FUN_1405003c0` calls `FUN_1404ff5e0(platoon, 0)` once `inventory refresh time` passes): only for a squad with vendor lists (`FUN_140959420`) that is
+  `is trader` (`FUN_140387960`, **Verified**); the home branch skips a building while its interior is loaded (its physics collection, interior +0x10: made
+  when the interior loads, `FUN_140561bb0`, gone when it is hidden, its timer runs out or the building goes, `FUN_14054b130`), so a shop restocks only while nobody is near it; the
+  first fill passes 1 and never skips. Not modelled: Meitou's simulation has no interior-loaded state, so a building shop restocks on time wherever the player is. So a resident that is no trader has its home filled only when the squad factory makes its characters (`FUN_140583a10`, on vendor lists or special items,
+  `FUN_140953f60`): at its first activation and when it is made afresh, not when it is loaded with them. Meitou (`TradeSystem.FillHome`): when the population makes the squad
+  from its template, after the town's artifacts, and when it makes it afresh.
+- **Containers** (`FUN_1409562f0`): the home's interior objects whose functionality is 2 BF_RESOURCE_STORAGE, 9 BF_SHOP or 13 BF_GENERAL_STORAGE and that have an inventory. Each
+  takes the kind its BUILDING's `itemtype limit` names and, when its `limit inventory` lists ITEMs, only those (`FUN_1402a30d0`); else a limit of 3 takes only armour
+  and 2 only items of the weapon slot (the record's `slot`, always for a crossbow, never for a map; `FUN_140554530`, `FUN_14074bc30`). Its section
+  has no equip callback, so no race limit applies. A container whose record lacks `itemtype limit` reads 0 (BUILDING) and is never filled.
+- **Fill** (`FUN_14095b210`, **Verified**): it unlocks every container, keeps those that suit the lists (`FUN_14095a5b0`: `itemtype limit` 4 ITEM or a kind the lists sell, and an
+  empty `limit inventory` or one naming something they sell or a money item), stops if none is kept, sorts them by lock level, highest first, clears them but their unique items
+  (`FUN_14074a5b0`), puts each special item into the first of a fresh shuffle that takes it, stops if no stock was rolled (no relock, the purse stays), then places the
+  stock (below) and relocks every kept container that holds something. What a list sells (`FUN_140956ba0`): the kind of each list with entries and its records of that kind; the money items are the ITEMs of `item function` 14 with a `value`.
+- **Placement** (`FUN_1409565e0`, **Verified**): the stock by `FUN_1407a8f90`, dearest first; the first half (at least one) each goes into the best-scoring container of those under
+  half full (`FUN_140746fe0`: occupied cells, or the first stack over `stackable bonus mult` for a one-item container), the score (`FUN_140952df0`) plus U(0, 0.01); the rest each
+  into the first container of a fresh shuffle that takes it. The score is 0 for a container locked at level L and an item (not money) worth less than 10 L, else L + 1, x 1.5 when
+  `itemtype limit` is the item's kind (0 when another, not ITEM), + 150 when `limit inventory` names it (0 when it names others), x 100 for money. An item goes in by `FUN_140954480`:
+  onto stacks first, then the first free cells row by row.
+- **Value** (`FUN_1407a8f90`, **Verified**): the item classes' value as `Market.UnitPrice` with no trader, or the open trade window's trader, as `FUN_14079e6d0` reads it
+  (`FUN_14070e2d0`, `FUN_1407116f0`, `FUN_14070d170`); the money item's is its record `value`.
 - **Special items** (`FUN_140958740`, **Verified**): on a refresh with specials, the template's `special items` (ITEM, 34 templates), else `special map items` (MAP_ITEM, 10): v0 of each,
-  in stacks of at most `stackable`, flagged unique with their quantity, offered to the building inventories first; what fits nowhere is destroyed. Meitou: on a squad's first fill, into
-  the stock before the vendor items; the unique flag is not modelled.
-- **Count**: n = round(U(0.8, 1.2) x `vendors fill total amount` x wealth), at least 1. Items: the vendor lists share n by weight as for squads (`FUN_140959800`), but every list's
-  money roll (`money item prob` against U(0, 1), then U[`money item min`, `money item max`]) is summed into one stack of the money item first.
-- **Purse** (the platoon's money): `vendor money` < 1: trunc(clamp(0.25 x value of the placed items, 3000, 25000) x wealth); else trunc((`vendor money` + r) x wealth) with r an int from
-  -0.4 x `vendor money` (the upper bound is not shown by the decompile).
+  in stacks of at most `stackable`, flagged unique with their quantity, offered to the building inventories first; what fits nowhere is destroyed. Only the building filler places them; a
+  squad shop gets none (`FUN_14095ab10`, **Verified**).
+- Meitou (`BuildingFill`, `TradeSystem.FillBuilding`; engine choices): containers of equal lock level keep the layout's order, items of equal value the roll's; a building shop's
+  restock puts its stock back into its containers, fills them and takes them up again. Tests: `BuildingFillTests`.
+- **Count** (**Verified**): n = round(U(0.8, 1.2) x `vendors fill total amount` (100 when not positive) x wealth), at least 1 for a building, 0 ending a squad's fill after the clear
+  with its purse kept. The stock (`FUN_140959800` building, `FUN_140959a90` squad, which reads the template's `vendors` only): every list's money roll (`money item prob` against U(0, 1),
+  then an int in [`money item min`, `money item max`], `FUN_140956060`) is summed and made into money items first (`FUN_1401641d0`: the money items (above)
+  dearest first, in stacks of `stackable`); then each list takes round(n x w / sum of w) of the units (w its v0 as is, so 0 takes none), the last also a positive remainder. A
+  list's units (`FUN_1409555d0`) are weighted picks; a unit joins an earlier stock item of the same record with room under its `stackable` (any quality; never a weapon); a drawn
+  blueprint or map leaves the list's choices for the rest of the fill; a weapon picks a manufacturer, and the item factory its model and level ([loose items](factions-squads-towns.md#loose-items-in-buildings)). No stock
+  made ends a squad's fill with its purse kept.
+- **Purse** (the platoon's money): `vendor money` < 1 (always for a squad shop): trunc(clamp(0.25 x value of the placed items, money items included, 3000, 25000) x wealth); else
+  trunc((`vendor money` + r) x wealth) with r an int in [-trunc(0.4 x `vendor money`), trunc(0.4 x `vendor money`)] (`FUN_1409b3b40`).
 - **Wealth** = clamp(faction wealth, 0.2, 1), but the faction wealth function (`FUN_1402dd530`) is a stub returning 1.0, so wealth is always 1
   (**Verified**, kenshi_x64.exe decompile: 9-byte function, constant return). It scales only shop stock count, purse and nest spawn weight; no price reads it.
-- Meitou (`Shop.ForBuilding`, engine choices): the stock is the shop's one inventory in which each stock container's grid is a rectangle of its own (`Inventory.Regions`, packed by maximal rectangles, the lowest of four orders; an item never spans two), the trade window shows them all with the cells outside every container greyed (a drop there: "No room for that item."), a container's window only its own. The money stack goes to the purse, r is symmetric,
+- Meitou (`Shop.ForBuilding`, engine choices): the stock is the shop's one inventory in which each stock container's grid is a rectangle of its own (`Inventory.Regions`, packed by maximal rectangles, the lowest of four orders; an item never spans two), the trade window shows them all with the cells outside every container greyed (a drop there: "No room for that item."), a container's window only its own. A shop's money rolls are not stocked but count in its purse's value (a home without a shop keeps them in its containers as the money items, as the original),
   stock is saved on the platoon as squad shops' ([save keys](../formats/save.md#npc-platoons-meitou-mapping); the original keeps it in the containers, zone file). Observed with real data (Squin, 2026-10-24): 3 to 13 rows more than the packed size (geometry: 300 random orders found none lower), e.g. the Bughouse armour shop 18 x 274 for 271.
 
 ## Artifacts
@@ -202,8 +236,8 @@ draw in placement order; an entry of 0 or fewer units is skipped. A building who
 generates one on first load, which is not modelled), so what it is given is lost; what goes to a building in another town's centre zone is placed, but a save made before
 that zone is visited writes no file for it, so loses it. Items flagged unique (`ItemInstance.Unique`) do not stack with others; a shop
 fill and `FillHome` keep them, and a building shop takes its containers' items into its stock when it is made and gives its unique items back to them when its squad is
-dropped or made afresh; once nobody of its squad is alive the shop closes and its whole stock goes back into the containers, which a save keeps with the building. Not modelled: the shop fill's container choice and relocking,
-so the containers of a stocked home end up unlocked after its first fill; and an import of a save that has no state for a placed town (a mod's town added since) gives that town
+dropped or made afresh; once nobody of its squad is alive the shop closes and its whole stock goes back into the containers, which a save keeps with the building. Not modelled:
+an import of a save that has no state for a placed town (a mod's town added since) gives that town
 no artifacts, as Meitou adds no state for a town a loaded save lacks. Tests: `ArtifactTests`, `TownArtifactTests`.
 
 ## Crimes, bounties and prisoners

@@ -133,7 +133,6 @@ public sealed partial class PopulationSystem
             Shop = stored.Shop,
             SavedAi = stored.Ai,
             LeftPackage = stored.Package,
-            NextHomeFillTick = stored.NextHomeFillTick,
         };
         // A stand-in that travelled since takes its members along, each on walkable ground (else at the stand-in).
         var walk = world.Walkability;
