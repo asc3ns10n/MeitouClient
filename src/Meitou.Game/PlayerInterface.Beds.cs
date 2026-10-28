@@ -13,14 +13,15 @@ namespace Meitou.Game;
 /// </summary>
 sealed partial class PlayerInterface
 {
-    /// <summary>How near the pointer the projected middle of a bed without a footprint must be, in pixels (an engine choice, as for containers).</summary>
+    /// <summary>How near the pointer the projected middle of a bed without a footprint must be, in pixels (an engine choice).</summary>
     const float BedPickPixels = 30;
 
     BedSpot? PickBed(Vector2 pixel) => PickBedAt(pixel)?.Bed;
 
     /// <summary>
-    /// The bed under the pixel with the ray distance, when not hidden behind a wall: the nearest the ray meets on its record's collision (hull prism, then triangles), as a building is
-    /// picked; else the bed without a footprint whose middle (half a unit above its spot) projects nearest the pixel within <see cref="BedPickPixels"/>.
+    /// The bed under the pixel with the ray distance, when not hidden behind a wall nor above the viewed floor of the building the player is in (<see cref="AboveViewedFloor"/>): the
+    /// nearest the ray meets on its record's collision (hull prism, then triangles), as a building is picked; else the bed without a footprint whose middle (half a unit above its spot)
+    /// projects nearest the pixel within <see cref="BedPickPixels"/>.
     /// </summary>
     (BedSpot Bed, float T)? PickBedAt(Vector2 pixel)
     {
@@ -29,6 +30,7 @@ sealed partial class PlayerInterface
         float bestT = float.MaxValue, bestPixels = BedPickPixels;
         foreach (var b in session.CurrentSnapshot.Beds)
         {
+            if (AboveViewedFloor?.Invoke(b.Position) == true) continue;
             if (buildHost?.Placement.Footprint(b.Record) is { } footprint)
             {
                 var yaw = Quaternion.CreateFromAxisAngle(Vector3.UnitY, b.Yaw);

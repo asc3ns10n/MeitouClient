@@ -228,6 +228,7 @@ sealed partial class GameHost
             {
                 Ground = ActiveGround,
                 Footprint = footprints.Of,
+                FootprintNow = footprints.Wait,
                 CollisionMesh = footprints.Mesh,
                 Plot = footprints.Plot,
                 PartBounds = footprints.PartBounds,

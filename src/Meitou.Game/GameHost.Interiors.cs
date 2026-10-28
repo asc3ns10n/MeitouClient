@@ -79,6 +79,9 @@ sealed partial class GameHost
         return ref interiorMemos[slot];
     }
 
+    /// <summary>Whether a place is above the shown floor of a building in the interior view, so what stands there is not drawn (as a character there).</summary>
+    bool AboveViewedFloor(System.Numerics.Vector3 at) => ViewedAt(at) is { } inView && interiorView[inView.PlacementId] is var shown && shown < 3 && inView.FloorAt(at) > shown;
+
     /// <summary>The viewed or held-open building <paramref name="at"/> is in (a loop: a lambda here made a closure and a delegate per character per frame).</summary>
     InteriorVolume? ViewedAt(System.Numerics.Vector3 at)
     {

@@ -344,6 +344,7 @@ sealed partial class GameHost(GameInstall install, WorldScene scene, AssetLocato
         player.MeshHit = (id, origin, direction) => gpu.Characters?.RayHit(DrawKey(id), origin, direction);
         player.Floor = (() => viewedFloor, StepFloor);
         player.HiddenInWorld = hiddenIndoors.Contains;
+        player.AboveViewedFloor = AboveViewedFloor;
         player.BuildingMoveHit = (origin, direction, distance) => gpu.Objects?.MoveHit(origin, direction, viewedFloor, distance);
         player.SurfaceMoveHit = SurfaceMoveHit;
         player.ClosedBuildingHit = (origin, direction, distance) => gpu.Objects?.ClosedBuildingHit(origin, direction, distance);

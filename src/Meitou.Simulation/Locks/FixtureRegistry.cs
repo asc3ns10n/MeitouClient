@@ -49,7 +49,7 @@ public sealed partial class FixtureRegistry
     IReadOnlyList<ContainerSpot>? containerSpots;
 
     /// <summary>Where the containers with an inventory stand, for the host's picking; rebuilt (serial phases) only when a building registers or goes.</summary>
-    public IReadOnlyList<ContainerSpot> ContainerSpots => containerSpots ??= [.. all.Where(f => f.Contents is not null).Select(f => new ContainerSpot(f.Id, f.RecordId, f.Position, f.Owner, f.Lock is { EffectivelyLocked: true }, f.Lock?.Level ?? 0))];
+    public IReadOnlyList<ContainerSpot> ContainerSpots => containerSpots ??= [.. all.Where(f => f.Contents is not null).Select(f => new ContainerSpot(f.Id, f.RecordId, f.Position, f.Owner, f.Lock is { EffectivelyLocked: true }, f.Lock?.Level ?? 0, f.Yaw))];
 
     List<Fixture>? cageList;
 
