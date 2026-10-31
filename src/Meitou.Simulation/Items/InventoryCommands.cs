@@ -4,8 +4,14 @@ namespace Meitou.Simulation.Items;
 
 /// <summary>Snapshot identity prevents a drag started before eating/looting from moving a different item.</summary>
 public sealed record InventoryItemToken(int Index, string Record, string Section, int X, int Y, int Quantity, float Quality);
-/// <summary>The inventory window's ARRANGE (<c>FUN_14070f740</c>): <see cref="InventoryCommands.Arrange"/> on the character's grids.</summary>
-public sealed record ArrangeInventory(CharacterId Character) : SimCommand;
+/// <summary>
+/// An inventory window's ARRANGE (<c>FUN_14070f740</c>, <b>Verified</b>): its inventory arranges each of its sections but the equipment ones (<see cref="InventoryCommands.Arrange"/>), so a
+/// character window its main grid, the bag window (<see cref="Bag"/>) the worn bag's.
+/// </summary>
+public sealed record ArrangeInventory(CharacterId Character) : SimCommand
+{
+    public bool Bag { get; init; }
+}
 
 public static class InventoryCommands
 {
@@ -61,14 +67,15 @@ public static class InventoryCommands
 
     /// <summary>
     /// Puts one unit into the equipment slot that takes it when that is free (the trade window's right click, <c>FUN_140713d20</c>: sections that accept the item's slot type are tried before
-    /// the general grids): weapons the first free cell of <c>back</c>, then <c>hip</c>; armour its <see cref="ItemInstance.EquipmentSection"/> when nothing is worn there. The order of two
-    /// matching sections is <b>Unknown</b>. Bags are not equipped here: the trade moves them whole, into a free <c>backpack_attach</c> first (engine choice, docs/simulation.md). False: no slot, the caller places it in a grid. Nothing is worn
+    /// the general grids, in the character's section order, <c>CharacterHuman::setupInventorySections</c> <c>0x14062c4e0</c>, <b>Verified</b>): weapons the first free cell of <c>hip</c>
+    /// (one item at most), then of <c>back</c> (two); armour its <see cref="ItemInstance.EquipmentSection"/> when nothing is worn there. Bags are not equipped here: the trade moves them
+    /// whole, into a free <c>backpack_attach</c> first (engine choice, docs/simulation.md). False: no slot, the caller places it in a grid. Nothing is worn
     /// that the wearer (<paramref name="wearer"/>; null: no check) may not wear (its race: <see cref="ItemInstance.WearableBy"/>), nor in a section closed for it (<see cref="SectionClosed"/>).
     /// </summary>
     public static bool TryEquip(Inventory root, ItemInstance item, CharacterCold? wearer = null)
     {
-        if (!item.WearableBy(wearer?.Race?.StringId) || item.Quantity != 1 || item.Width <= 0 || item.Height <= 0) return false;
-        string[] sections = item.Type is Meitou.Data.Fcs.FcsRecordType.WEAPON or Meitou.Data.Fcs.FcsRecordType.CROSSBOW ? ["back", "hip"]
+        if (!Wears(wearer, item) || item.Quantity != 1 || item.Width <= 0 || item.Height <= 0) return false;
+        string[] sections = item.Type is Meitou.Data.Fcs.FcsRecordType.WEAPON or Meitou.Data.Fcs.FcsRecordType.CROSSBOW ? ["hip", "back"]
             : item.Type is Meitou.Data.Fcs.FcsRecordType.ARMOUR or Meitou.Data.Fcs.FcsRecordType.ITEM && IsEquipmentSection(item.EquipmentSection) && item.EquipmentSection is not ("back" or "hip" or "backpack_attach") ? [item.EquipmentSection] : [];
         foreach (string section in sections)
         {
@@ -76,6 +83,7 @@ public static class InventoryCommands
             int x = 0, y = 0;
             if (section is "back" or "hip")
             {
+                if (ItemsLimitReached(root, section)) continue;
                 var size = SectionSize(section);
                 var cell = Enumerable.Range(0, Math.Max(0, size.Height - item.Height + 1))
                     .SelectMany(cy => Enumerable.Range(0, Math.Max(0, size.Width - item.Width + 1)).Select(cx => (X: cx, Y: cy)))
@@ -91,6 +99,43 @@ public static class InventoryCommands
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Whether a weapon slot holds as many items as it may (the section's items limit, <c>CharacterHuman::setupInventorySections</c>, <b>Verified</b>: <c>hip</c> 1, <c>back</c> 2; the other
+    /// equipment slots hold one item whatever its footprint, <see cref="IsSingleSlot"/>).
+    /// </summary>
+    public static bool ItemsLimitReached(Inventory root, string section) => section switch
+    {
+        "hip" => root.Items.Count(i => i.Section == section) >= 1,
+        "back" => root.Items.Count(i => i.Section == section) >= 2,
+        _ => false,
+    };
+
+    /// <summary>
+    /// Whether <paramref name="wearer"/> (null: no check) may put <paramref name="item"/> in an equipment section: <c>RaceLimiter::canEquip(item, who)</c> (<c>FUN_14075d720</c>, <b>Verified</b>),
+    /// which passes whether it is an animal, so an item without a race list is for no animal (<see cref="ItemInstance.WearableBy"/>).
+    /// </summary>
+    static bool Wears(CharacterCold? wearer, ItemInstance item) => item.WearableBy(wearer?.Race?.StringId, wearer is { } w && SquadRegistry.IsAnimal(w));
+
+    /// <summary>A character's sections of an item's slot type (<c>getAllSectionsOfType</c>, in the character's section order).</summary>
+    public static string[] SlotSections(ItemInstance item) => item.Type is FcsRecordType.WEAPON or FcsRecordType.CROSSBOW ? ["hip", "back"]
+        : item.Type is FcsRecordType.ARMOUR or FcsRecordType.ITEM && IsEquipmentSection(item.EquipmentSection) && item.EquipmentSection is not ("back" or "hip" or "backpack_attach") ? [item.EquipmentSection] : [];
+
+    /// <summary>
+    /// A character's auto-add (<c>Inventory::addItem</c> <c>0x140745c80</c>, <c>tryAddItem</c> <c>0x14074bd20</c>, <b>Verified</b>): the equipment sections that take it, in the character's
+    /// section order (<see cref="TryEquip"/>, a bag the free <c>backpack_attach</c> when the wearer may wear it), then <c>main</c> (<see cref="Inventory.AddTo"/>); never the worn bag, which is an inventory of its own.
+    /// </summary>
+    public static bool TryAdd(Inventory root, ItemInstance item, CharacterCold? wearer)
+    {
+        if (TryEquip(root, item, wearer)) return true;
+        if (item.Type == FcsRecordType.CONTAINER && item.Contents is not null && item.Quantity == 1 && Wears(wearer, item) && !root.Items.Exists(i => i.Section == "backpack_attach"))
+        {
+            (item.Section, item.X, item.Y) = ("backpack_attach", 0, 0);
+            root.Items.Add(item);
+            return true;
+        }
+        return root.AddTo("main", item);
     }
 
     public static bool Move(Inventory root, InventoryItemToken token, string section, int x, int y, CharacterCold? wearer = null) => Transfer(root, token, root, section, x, y, limbs: true, wearer);
@@ -143,7 +188,7 @@ public static class InventoryCommands
         var size = section is "back" or "hip" ? SectionSize(section) : IsEquipmentSection(section) || IsLimbSection(section) ? (item.Width, item.Height) : (target?.Width ?? 0, target?.Height ?? 0);
         if (owner is null || target is null || !owner.Items.Contains(item) || x < 0 || y < 0 || item.Width <= 0 || item.Height <= 0 ||
             x > size.Item1 - item.Width || y > size.Item2 - item.Height || item.Quantity > target.LimitOf(item)) return false;
-        if ((IsEquipmentSection(section) || IsLimbSection(section)) && !item.WearableBy(wearer?.Race?.StringId)) return false;
+        if ((IsEquipmentSection(section) || IsLimbSection(section)) && !Wears(wearer, item)) return false;
         if (SectionClosed(wearer, section)) return false;
         if (IsEquipmentSection(section))
         {
@@ -165,37 +210,39 @@ public static class InventoryCommands
         item.Section = section; item.X = x; item.Y = y; return true;
     }
     /// <summary>
-    /// ARRANGE (<c>FUN_14070f740</c>, <b>Observed</b>): every grid section (the main grid and the worn bag's) is emptied and its items added again through the auto-add
-    /// (<see cref="Inventory.AddTo"/>: partial stacks merge) in a sorted order: first by the longer side of the footprint, then by its area, then by its width, largest first (a stable sort);
-    /// the first order in which everything fits is kept, otherwise every item goes back where it was (false).
+    /// ARRANGE of one section (<c>InventorySection::autoArrange</c>, <c>FUN_140749d30</c>, <b>Verified</b>): its items in position order (by x, then y), sorted by the original's sort
+    /// (<see cref="ArrangeSort"/>) largest first on a key (<c>FUN_1407468a0</c>: the longer side of the footprint, on a second pass the area, on a third the width), each added again by
+    /// <paramref name="add"/> (the section's auto-add, <see cref="Inventory.AddTo"/>); the first pass that adds them all is kept. After a pass that does not, the items it joined away
+    /// are dropped and the pieces it split off lost, as the original's; after the third the items left go back to their old cells with what they hold then.
     /// </summary>
-    public static bool Arrange(Inventory root)
+    public static void Arrange(Inventory grid, string section, Func<ItemInstance, bool>? add = null)
     {
-        var grids = new List<(Inventory Grid, string Section, ItemInstance[] Items)>();
-        foreach (var (grid, section) in new[] { (root, "main"), (root.Backpack?.Contents, "backpack_content") })
-            if (grid is not null) grids.Add((grid, section, [.. grid.Items]));
-        var saved = grids.SelectMany(g => g.Items).Select(i => (Item: i, i.X, i.Y, i.Quantity, i.Charges)).ToArray();
-        void Restore()
+        add ??= item => grid.AddTo(section, item);
+        var original = grid.Items.Where(i => i.Section == section).OrderBy(i => i.X).ThenBy(i => i.Y).Select(i => (Item: i, i.X, i.Y)).ToList();
+        Func<(ItemInstance Item, int X, int Y), (ItemInstance Item, int X, int Y), bool>[] keys =
+        [
+            (a, b) => Math.Max(a.Item.Width, a.Item.Height) > Math.Max(b.Item.Width, b.Item.Height),
+            (a, b) => a.Item.Width * a.Item.Height > b.Item.Width * b.Item.Height,
+            (a, b) => a.Item.Width > b.Item.Width,
+        ];
+        for (int mode = 0; mode < keys.Length; mode++)
         {
-            foreach (var g in grids) { g.Grid.Items.Clear(); g.Grid.Items.AddRange(g.Items); }
-            foreach (var old in saved) (old.Item.X, old.Item.Y, old.Item.Quantity, old.Item.Charges) = (old.X, old.Y, old.Quantity, old.Charges);
-        }
-        Func<ItemInstance, long>[] orders = [i => Math.Max(i.Width, i.Height), i => i.Width * (long)i.Height, i => i.Width];
-        foreach (var order in orders)
-        {
+            grid.Items.RemoveAll(i => i.Section == section);
+            var sorted = original.ToArray();
+            ArrangeSort.Sort(sorted, keys[mode]);
             bool fits = true;
-            foreach (var (grid, section, all) in grids)
-            {
-                var items = all.Where(i => i.Section == section).OrderByDescending(order).ToArray();
-                grid.Items.RemoveAll(i => i.Section == section);
-                foreach (var item in items)
-                    if (item.Width <= 0 || item.Height <= 0 || !grid.AddTo(section, item)) { fits = false; break; }
-                if (!fits) break;
-            }
-            if (fits) return true;
-            Restore();
+            foreach (var entry in sorted)
+                if (!add(entry.Item)) fits = false;
+            if (fits) return;
+            if (mode < keys.Length - 1) original.RemoveAll(e => e.Item.Quantity == 0);
         }
-        return false;
+        grid.Items.RemoveAll(i => i.Section == section);
+        foreach (var (item, x, y) in original)
+        {
+            if (item.Quantity <= 0) continue;
+            (item.Section, item.X, item.Y) = (section, x, y);
+            grid.Items.Add(item);
+        }
     }
 
     /// <summary>
@@ -205,27 +252,52 @@ public static class InventoryCommands
         type is FcsRecordType.WEAPON or FcsRecordType.ARMOUR or FcsRecordType.CONTAINER or FcsRecordType.MAP_ITEM or FcsRecordType.CROSSBOW or FcsRecordType.LIMB_REPLACEMENT;
 
     /// <summary>
-    /// Whether a held item joins the stack it is dropped on (<c>FUN_140715560</c>): same record (so type), material and quality, of a type that stacks; Meitou also keeps stolen, death
-    /// and unique items apart, as <see cref="Inventory.Add"/> does.
+    /// Whether two items are of a kind that stacks together (<c>canStackWith</c>, <c>FUN_14075d470</c>, <b>Verified</b>): the same record, maker and material (<c>isSameAs</c>,
+    /// <c>FUN_14075d510</c>), and when either is stolen the same owner (<see cref="ItemInstance.Mark"/>); quality, level, a death item's or an artifact's flag are not compared. How many a
+    /// cell holds is the section's (<see cref="Inventory.LimitOf"/>). <paramref name="held"/>, one of the two, lies in an inventory held by <paramref name="holder"/>; the other is held by
+    /// nobody (being added, or on the mouse), so it is stolen whenever it has a mark (<see cref="Stolen"/>).
     /// </summary>
-    public static bool Stackable(ItemInstance a, ItemInstance b) => !NeverStacks(a.Type) && a.Record == b.Record && a.MaterialId == b.MaterialId && a.Quality == b.Quality
-        && a.Mark == b.Mark && a.Death == b.Death && a.Unique == b.Unique && a.Contents is null && b.Contents is null;
+    public static bool SameKind(ItemInstance a, ItemInstance b, InventoryHolder? holder = null, ItemInstance? held = null) =>
+        a.Record == b.Record && a.CompanyId == b.CompanyId && a.MaterialId == b.MaterialId
+        && (!Stolen(a, ReferenceEquals(a, held) ? holder : null) && !Stolen(b, ReferenceEquals(b, held) ? holder : null) || a.Mark == b.Mark);
 
     /// <summary>
-    /// Moves <paramref name="units"/> of <paramref name="from"/> onto the stack <paramref name="into"/>. Partial charges combine: a stack is full units and one partly used one (its
-    /// <see cref="ItemInstance.Charges"/>), so when the last of <paramref name="from"/> moves, its part joins <paramref name="into"/>'s; two parts that fit in one unit make one.
+    /// Whether a marked item counts as stolen where it lies (<c>InventoryItemBase::isStolen(true)</c>, <c>FUN_14079e550</c>, <b>Verified</b>): not when its holder is of the owner's
+    /// faction or lawless (a bandit or not-real faction), nor when the owner is of the holder's squad (the handles' <c>container</c>, the platoon); held by nobody, it is.
     /// </summary>
-    public static void Merge(ItemInstance into, ItemInstance from, int units)
+    public static bool Stolen(ItemInstance item, InventoryHolder? holder) => item.Mark != StolenMark.None
+        && !(holder is { } h && (h.Faction >= 0 && (h.Faction == item.Mark.Faction || h.Lawless) || h.Squad >= 0 && h.Squad == item.Mark.Squad));
+
+    /// <summary>
+    /// <paramref name="amount"/> units of <paramref name="from"/> join <paramref name="into"/> (<c>addQuantity</c>, <c>FUN_14075e220</c>, <b>Verified</b>), nothing unless they are of a kind
+    /// (<see cref="SameKind"/>). Each is full units and one partly used one: the two partly used ones' charges add, and past a full unit they make one unit more with the excess as the
+    /// partly used one, else one unit. Past <paramref name="limit"/>, <paramref name="into"/> is cut to it at a full charge and the units over, with the partly used charge, are
+    /// <paramref name="from"/>'s. Returns the units left in <paramref name="from"/> (0: all joined). The caller moves the traded count (<see cref="ItemInstance.MoveTraded"/>).
+    /// </summary>
+    public static int Join(ItemInstance into, ItemInstance from, int amount, int limit, InventoryHolder? holder = null, ItemInstance? held = null)
     {
-        if (units <= 0) return;
-        bool last = units >= from.Quantity;
-        into.Quantity += units;
-        from.Quantity -= units;
-        if (!last || into.MaxCharges <= 0) return;
-        float combined = into.Charges + from.Charges;
-        if (combined <= into.MaxCharges) { into.Quantity--; into.Charges = combined; }
-        else into.Charges = combined - into.MaxCharges;
+        if (!SameKind(into, from, holder, held)) return amount;
+        float full = Full(into), charge = Charge(into) + Charge(from);
+        int quantity = into.Quantity + amount - 1, left = 0;
+        if (charge > full) { quantity++; charge -= full; }
+        SetCharge(into, charge);
+        SetCharge(from, 0);
+        if (quantity > limit)
+        {
+            SetCharge(from, charge);
+            SetCharge(into, full);
+            left = quantity - limit;
+            quantity = limit;
+        }
+        into.Quantity = quantity;
+        if (!ReferenceEquals(into, from)) from.Quantity = left;
+        return left;
     }
+
+    // An item without charges counts as one full charge of 1.
+    static float Full(ItemInstance i) => i.MaxCharges > 0 ? i.MaxCharges : 1;
+    static float Charge(ItemInstance i) => i.MaxCharges > 0 ? i.Charges : 1;
+    static void SetCharge(ItemInstance i, float charge) { if (i.MaxCharges > 0) i.Charges = charge; }
 
     /// <summary>
     /// Whether a section takes an item, the section half of <c>FUN_14074bc30</c>: the grids (<c>main</c>, <c>backpack_content</c>) anything, but a bag only empty into a bag; a weapon slot
@@ -275,8 +347,8 @@ public static class InventoryCommands
             if (last) owner.Items.RemoveAt(at);
             unit.Death = false;
             bool worn = false;
-            bool placed = bagOnly ? into.Backpack?.Contents is { } only && only.AddTo("backpack_content", unit)
-                : bagFirst && into.Backpack?.Contents is { } bag && bag.AddTo("backpack_content", unit) || (worn = TryEquip(into, unit, wearer)) || into.AddTo("main", unit);
+            bool placed = bagOnly ? into.Backpack?.Contents is { } only && only.AddTo("backpack_content", unit, into.Holder)
+                : bagFirst && into.Backpack?.Contents is { } bag && bag.AddTo("backpack_content", unit, into.Holder) || (worn = TryEquip(into, unit, wearer)) || into.AddTo("main", unit);
             if (!placed)
             {
                 unit.Death = death;

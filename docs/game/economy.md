@@ -64,7 +64,39 @@ money-item branches are scoped in the expressions/field tables and undecoded que
   The base game's CONTAINER `Shopkeepers Backpack` (`910-gamedata.base`) has storage 20 x 20 (raw read of `gamedata.base`); which characters wear it is not traced.
   The window's grid is 18 x 18 for a squad trader and the building containers' merged size for a building shop (**Observed**, `FUN_140953850`; details in ui-screens).
   Meitou's squad shops hold one 18 x 18 stock (`Shop`). The 2026-10-17 reference screenshot's trader (Ronin Construction Trader) shows about 28 columns.
-- **Stock stacks** (**Observed**, `ShopTraderInventory::vfunc_1` = `FUN_140955f50`, the stock section's constructor): stack bonus minimum 1, mult 50, so a stock cell holds
+- **Window copy** (**Verified**, `FUN_140953850`, `FUN_1409528d0`): the window holds copies of its sources' items but money (a building shop's containers' first sections, a squad
+  shop's members' worn bags): new items of the same record, maker, material and level (`copyItem`, `FUN_14057c030`, which keeps the owner, charges and unique flag and nothing of the
+  instance's own: a bag's copy is a new empty container, shackles copy as plain armour without a lock, a prosthetic undamaged, the colour the record's), fully charged and
+  with no owner, so not stolen (`FUN_140952730`, `FUN_14075d6b0`). Each is added where it first fits (one that does not fit makes
+  the grid two of its heights taller, `FUN_140954ba0`; its retry passes the caller's quantity again, and the add places quantity + the item's own count - 1, writing what is left
+  back into the item on a failure, `FUN_14074c8b0`: so a copy, which holds 1 and is passed its source's count Q, that needs the growth comes out as 2Q - 1 units, Q - 1 more than the
+  sources hold, **Verified** by running both native bodies; the other window adds pass 1 and are exact; Meitou the same, `TradeSystem.Shown`), then they are arranged (`FUN_140749d30`: from the items' position order, by x then y, longer side first, `FUN_1407468a0`, sorted by MSVC's `std::_Sort` `0x14075bb40` (depth budget the item count, from the call at `0x14074a02b`, **Verified**)
+(its closure: `_Unguarded_partition` `0x1407592e0`, `_Median` `0x140757670`, `_Med3` `0x140754b00`, `_Insertion_sort1` `0x1407547d0`, `_Make_heap` `0x140757780`, `_Sort_heap`
+`0x14075a810`, `_Adjust_heap` `0x140754d20`, `_Push_heap` `0x140752530`; the comparator inlined; Meitou `ArrangeSort`, an introsort that is not stable, its steps in that file's comments: **Verified** against the order the original exe's sort
+gives 40 items of tied sizes, `TradeTests`),
+  each added again as above; as the grid grows for any item, the ARRANGE's other two keys are never tried). It is made when the window opens and again on a restock of the shown trader's
+  squad when that trader is the squad's effective leader (`getSquadLeader`, a down or held leader's backup; `FUN_14095ab10`, `FUN_14095b9d0`; a squad restock that rolls nothing returns first); nothing else remakes it, so a source item gone meanwhile (a shopper) still shows and a buy of it takes nothing off the sources. A right-click
+  sale (`InventoryGUI` auto trade) adds through the same growing add, a bag included (**Observed**). A right click moves one unit (`RClickAutoTrade`): a single item moves itself,
+  its lock and damage with it; a unit off a stack is a `copyItem` that keeps the stack's partly used charge, and on success the stack left behind is full again (`resetCharges`); a
+  lift onto the mouse splits a unit off the same way (`pickupItemToMouse`, `takeCertainAmountFrom`). A shift right click repeats that a unit at a time until one fails
+  (`RClickAutoTradeAll`): each unit is checked for theft and smuggling, then priced and paid, on its own (the checks come first, so a shop that can't pay still rolls,
+  **Verified**); only the first failure is told. Meitou: `BuyItem`/`SellItem` (a drag is the held item's, [ui-screens](ui-screens.md));
+  engine choice: each unit's fence roll is keyed by its place in the run, as they come in one tick. The grid is never made smaller again during a trade, as the original's section only grows (Meitou: a remade window keeps the height the last one had).
+  The window's remove and add callbacks keep the sources in step with every move: units taken off the window (a lift onto the mouse, `FUN_1407139a0`, or a right-click buy) come off
+  the sources' first items of the same record, maker and material at once (`FUN_140952a70`, `FUN_14075d510`; a bag goes whole, its contents with it; a stack that keeps some is full again, `removeItemDontDestroy_returnsItem` `FUN_14074a950`, **Verified**), and units put on it (a sale,
+  an item put back, at its old cell when free, `returnItem`) add a copy to the first source that takes it (`FUN_1409529e0`; none: the sources lose it, the window keeps it). So an item on the mouse survives a restock.
+  An add that tops up a window stack puts a copy of that stack, as many units as it grew by, into the sources (`_sectionUpdateItemCallback`), so partly used units that join
+  without the stack growing put nothing in. A right-click buy of a whole item takes it off the window and the sources first, so one that fails (can't afford, no room) goes back
+  onto its cell and puts a copy into the sources (`RClickAutoTrade`) (**Observed**, decompile). A drop onto a window stack takes that stack off first and adds the joined one; when
+  the join overflows, the stack under it is cut to what is left before it is taken off, so the sources lose only that and gain the whole joined stack: the units it took in are
+  in the sources twice (**Verified** by running `placeItemFromMouse`; rare, as a window cell holds 50 stacks' worth, but a stack near that limit does it). An
+  inventory's add clears an owner of the receiving inventory's faction (`InventorySection::addItem`, `FUN_14074c8b0`): a right-click sale's item and every copy into the sources lose a
+  mark of the trader's faction, but an item dropped on the window keeps it (`placeItemFromMouse` adds with `_addItem`). Meitou (`TradeSystem.DisplayOf`): the copy of the shop's
+  stock, made when the trade opens and on a restock (`Shop.Fills`); its other sources are the shop building's other lockable containers (`Sources`, [stock grid size](ui-screens.md#6-inventory-trade-dialogue-build));
+  engine choices: the copies are added in the stock's order, a buy or sale tries the stock before the other sources, a sale's copy goes into the stock as any item put in it (onto a stack in any container first).
+  Tests: `TradeTests`.
+- **Stock stacks** (`ShopTraderInventory::vfunc_1` = `FUN_140955f50`, the stock section's constructor, **Observed**; the window section's constructor `0x1409527e0`, **Verified** by
+  running it): stack bonus minimum 1, mult 50, so a stock cell holds
   50 x the item's `stackable` (Building Material, `stackable` 1: 50). Meitou: `Shop.StockStackMult` on both shop kinds.
 
 ### Trading range
@@ -138,7 +170,7 @@ Goal 118/119 shoppers: the sale is `FUN_14074a630`, called by [`FUN_1409a14b0`](
   -0.4 x `vendor money` (the upper bound is not shown by the decompile).
 - **Wealth** = clamp(faction wealth, 0.2, 1), but the faction wealth function (`FUN_1402dd530`) is a stub returning 1.0, so wealth is always 1
   (**Verified**, kenshi_x64.exe decompile: 9-byte function, constant return). It scales only shop stock count, purse and nest spawn weight; no price reads it.
-- Meitou (`Shop.ForBuilding`, engine choices): the stock is the shop's one inventory in which each stock container's grid is a rectangle of its own (`Inventory.Regions`, packed by maximal rectangles, the lowest of four orders; an item never spans two), the trade window shows them all with the cells outside every container greyed (a drop there: "No room for that item."), a container's window only its own. The money stack goes to the purse, r is symmetric,
+- Meitou (`Shop.ForBuilding`, engine choices): the stock is the shop's one inventory in which each stock container's grid is a rectangle of its own (`Inventory.Regions`, packed by maximal rectangles, the lowest of four orders; an item never spans two), a container's window only its own (the trade window shows a copy, above). The money stack goes to the purse, r is symmetric,
   stock is saved on the platoon as squad shops' ([save keys](../formats/save.md#npc-platoons-meitou-mapping); the original keeps it in the containers, zone file). Observed with real data (Squin, 2026-10-24): 3 to 13 rows more than the packed size (geometry: 300 random orders found none lower), e.g. the Bughouse armour shop 18 x 274 for 271.
 
 ## Artifacts
@@ -200,7 +232,7 @@ saved and read back with the keys above, and given out when a town makes its res
 when the level data names one, places an object, and whose template Meitou housed there ([town residents](factions-squads-towns.md#town-residents)); ties keep the buildings' placement order, the entries' order and the containers' layout order, and the buildings
 draw in placement order; an entry of 0 or fewer units is skipped. A building whose interior layout the level data does not name has no interior in Meitou (the original
 generates one on first load, which is not modelled), so what it is given is lost; what goes to a building in another town's centre zone is placed, but a save made before
-that zone is visited writes no file for it, so loses it. Items flagged unique (`ItemInstance.Unique`) do not stack with others; a shop
+that zone is visited writes no file for it, so loses it. Items flagged unique (`ItemInstance.Unique`) stack as any other, the flag not compared (`canStackWith`), the stack keeping the flag of the one joined; a shop
 fill and `FillHome` keep them, and a building shop takes its containers' items into its stock when it is made and gives its unique items back to them when its squad is
 dropped or made afresh; once nobody of its squad is alive the shop closes and its whole stock goes back into the containers, which a save keeps with the building. Not modelled: the shop fill's container choice and relocking,
 so the containers of a stocked home end up unlocked after its first fill; and an import of a save that has no state for a placed town (a mod's town added since) gives that town
@@ -644,6 +676,8 @@ Roll convention: a `rand()` draw in [0, 1) against the chance p; the thief gets 
   not resolve to a character; so a shop that buys stolen goods asks and rolls only for goods stolen from its own squad. Meitou: `TradeSystem.Fences`; the prompt and the hover box
   ([ui-screens](ui-screens.md)) show the same p the roll uses.
 - **Fence attempt** (`FUN_140793770`, **Observed**): caught when p < the draw: dialogue event 8 on the trader and a pending Fencing (0xd) against the trader's faction with timer 30 (`FUN_140852e10`).
+  The trade window then closes every inventory window (`closeAllInventories`, the drop `FUN_140715560` and the right click `RClickAutoTrade` alike, **Verified**), so the trade ends;
+  the same for a smuggling refusal. Meitou: `TradeSystem.CaughtSelling`.
   Thievery XP whenever p < 0.98 (and the trader is not imprisoned): the generic entry (dt 1) with 5 x 2 when the fence works, 20 x 2 when caught (`CrimeSystem.FenceXp`). Meitou: `TradeSystem.Caught`.
 - **Steal chance** (`FUN_1407944d0(thief, victim, item)`, **Observed**): 1.0 for a dead or knocked-out thief (`+0x5b9`, `+0x5bc`) or one in posture 3. A victim that is a character: p = 1.1 x thievery/100. A victim that is a
   building's container: the watcher is the nearest conscious member (not dead, `+0x5bc` clear, posture below 3, on the thief's floor first) of the building owner's platoon (`FUN_140792ce0`; none: 1.0);
@@ -665,8 +699,14 @@ Roll convention: a `rand()` draw in [0, 1) against the chance p; the thief gets 
 
 **Observed** (reported by the PR #41 contributor from the original game; not checked by the owner): an item bought and returned before the trade closes refunds its
 purchase price; one sold and bought back costs what the sale paid; closing the trade ends this. The original's item rows have a `Buyback` row right after the name
-(**Observed**, decompile, [item rows](ui-screens.md#tooltips)); when it shows is **Unknown**, as is how partially charged or mixed-price stacks are allocated.
-Meitou: [simulation](../simulation.md#trade).
+(**Observed**, decompile, [item rows](ui-screens.md#tooltips)).
+The rule (**Observed**, decompile, `InventoryGUI`): the trade keeps a table of item -> units traded (`FUN_14070efb0`: an item traded adds its quantity, one traded back again
+subtracts it; `FUN_14070f0d0` moves counts with the units when a stack splits or merges; `clearTradePartners` empties it). Units in the table are priced at the opposite
+direction's value at that moment, not at what was paid: a drop of a stack partly in the table pays normal x the rest + opposite x the counted units, less the opposite value's
+charge shortfall (`FUN_140715560`); a right-click unit is priced in the opposite direction when its item is in the table (`RClickAutoTrade`). A count is the table's own: a
+change of a stack's quantity alone leaves it, so it can exceed the stack (an add that spreads a stack over cells keeps the whole count on the item, the last piece, its new copies
+having none) and a toggle of such a stack leaves it below 0; a right-click unit split off a stack takes up to 1 of the count and is lost with it when the trade fails. The tooltip's
+`Buyback` row shows while the item has traded units, with their number when not all of it (`Buyback (N)`, `FUN_1407a13a0`). Meitou: [simulation](../simulation.md#trade).
 
 ## Evidence index
 

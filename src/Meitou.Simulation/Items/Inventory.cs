@@ -16,8 +16,15 @@ public sealed class Inventory(int width, int height)
     public Inventory() : this(MainWidth, MainHeight) { }
 
     public int Width { get; } = width;
-    public int Height { get; } = height;
+    /// <summary>Rows of the grid; only a trade window grows (<see cref="Trading.TradeSystem"/>).</summary>
+    public int Height { get; internal set; } = height;
     public List<ItemInstance> Items { get; } = [];
+
+    /// <summary>
+    /// Who holds its items (the original's <c>_whosInventoryWeAreIn</c>, as <c>isStolen</c> reads it): a character, a container's owner, a shop; null: nobody known. A worn bag's
+    /// contents are its wearer's (the root's holder is passed to their adds).
+    /// </summary>
+    internal Func<InventoryHolder>? Holder { get; set; }
 
     /// <summary>The worn backpack, if any.</summary>
     public ItemInstance? Backpack => Items.Find(i => i.Section == "backpack_attach");
@@ -81,19 +88,17 @@ public sealed class Inventory(int width, int height)
     }
 
     /// <summary>
-    /// Puts an item in, honouring the stack limit of each inventory (<see cref="LimitOf"/>): first it tops up stacks of the same record and quality in the main grid, then in the
-    /// backpack; what is left takes the first free cells of <c>main</c>, then of the backpack, at most a full stack per cell (the item itself goes into the last cell, split-off
-    /// copies into the others). True when every unit found a place; otherwise what did not fit stays in <paramref name="item"/>'s <see cref="ItemInstance.Quantity"/> (the caller
-    /// keeps or drops it) and the units placed stay placed. Units with a buyback receipt top up only stacks of the same trade and direction; with no free cell left they join plain
-    /// stacks too and lose the receipt (docs/simulation.md, trading).
+    /// Puts an item in, honouring the stack limit of each inventory (<see cref="LimitOf"/>): first it tops up stacks of its kind in the main grid, then in the backpack (<see cref="TopUp"/>);
+    /// what is left takes the first free cells of <c>main</c>, then of the backpack, at most a full stack per cell (<see cref="Place"/>). True when every unit found a place; otherwise what
+    /// did not fit stays in <paramref name="item"/>'s <see cref="ItemInstance.Quantity"/> (the caller keeps or drops it) and the units placed stay placed. Engine choice: the original adds
+    /// into one section at a time (<c>tryAddItem</c>), and a character's bag is an inventory of its own.
     /// </summary>
     public bool Add(ItemInstance item)
     {
         var bag = Backpack?.Contents;
-        if (TopUp(this, item, false) || (bag is not null && TopUp(bag, item, false))) return true;
+        if (TopUp(this, item, holder: Holder) || (bag is not null && TopUp(bag, item, holder: Holder))) return true;
         if (Place(this, "main", item)) return true;
-        if (bag is not null && Place(bag, "backpack_content", item)) return true;
-        return item.Buyback is not null && (TopUp(this, item, true) || (bag is not null && TopUp(bag, item, true)));
+        return bag is not null && Place(bag, "backpack_content", item);
     }
 
     /// <summary>
@@ -113,48 +118,55 @@ public sealed class Inventory(int width, int height)
     }
 
     /// <summary>
-    /// The original's auto-add into one section (<c>FUN_14074c8b0</c>): tops up the stacks of <paramref name="section"/> first, then takes the first free cells row by row from the top, left to
-    /// right, a full stack per cell. True when every unit found a place; what did not fit stays in <paramref name="item"/>.
+    /// The original's auto-add into one section (<c>FUN_14074c8b0</c>, <b>Verified</b>): tops up the stacks of <paramref name="section"/> first (<see cref="TopUp"/>), then takes the first
+    /// free cells row by row from the top, left to right, a full stack per cell (<see cref="Place"/>). True when every unit found a place; what did not fit stays in <paramref name="item"/>.
     /// </summary>
-    public bool AddTo(string section, ItemInstance item) => TopUp(this, item, false, section) || Place(this, section, item);
+    public bool AddTo(string section, ItemInstance item, Func<InventoryHolder>? holder = null) => TopUp(this, item, section, holder ?? Holder) || Place(this, section, item);
 
     /// <summary>
-    /// Moves units of <paramref name="item"/> into stacks of <paramref name="into"/> with room left (of <paramref name="section"/>, else of its grids; <paramref name="dropReceipt"/>:
-    /// plain stacks too); true when none are left.
+    /// The add's top-up (<c>FUN_14074c8b0</c>, <b>Verified</b>), tried for an item more than one of which a cell holds or one partly used: each item of its kind
+    /// (<see cref="InventoryCommands.SameKind"/>) of <paramref name="section"/> (else of the grids), in order, takes what it can (<see cref="InventoryCommands.Join"/>), the units it
+    /// grew by bringing their traded count; true when none are left.
     /// </summary>
-    static bool TopUp(Inventory into, ItemInstance item, bool dropReceipt, string? section = null)
+    static bool TopUp(Inventory into, ItemInstance item, string? section = null, Func<InventoryHolder>? holder = null)
     {
         int limit = into.LimitOf(item);
-        if (limit <= 1) return false;
+        if (limit <= 1 && !(item.MaxCharges > 0 && item.Charges < item.MaxCharges)) return false;
+        var by = holder?.Invoke();
         foreach (var other in into.Items)
         {
-            if (ReferenceEquals(other, item) || other.Record != item.Record || other.Quality != item.Quality || other.Mark != item.Mark || other.Death != item.Death || other.Unique != item.Unique || other.Contents is not null
-                || (section is null ? other.Section is not ("main" or "backpack_content") : other.Section != section)) continue;
-            var (kept, coming) = (other.Buyback, item.Buyback);
-            if (kept is null ? coming is not null && !dropReceipt : coming is null || !kept.Joins(coming)) continue;
-            int move = Math.Min(limit - other.Quantity, item.Quantity);
-            if (move <= 0) continue;
-            other.Quantity += move;   // clears other's receipt; the joined one is set after
-            if (kept is not null) other.Buyback = kept.Append(coming!.Take(move));
-            item.Quantity -= move;
+            if (ReferenceEquals(other, item) || !InventoryCommands.SameKind(other, item, by, other) || (section is null ? other.Section is not ("main" or "backpack_content") : other.Section != section)) continue;
+            int before = other.Quantity;
+            InventoryCommands.Join(other, item, item.Quantity, limit, by, other);
+            if (other.Quantity > before) ItemInstance.MoveTraded(item, other, other.Quantity - before);
             if (item.Quantity == 0) return true;
         }
         return false;
     }
 
-    /// <summary>Puts the units of <paramref name="item"/> into free cells of <paramref name="into"/>, a full stack per cell; true when none are left.</summary>
+    /// <summary>
+    /// Puts the units of <paramref name="item"/> into free cells of <paramref name="into"/>, a full stack per cell (<c>FUN_14074c8b0</c>, <b>Verified</b>): each cell but the last gets a new
+    /// copy (<c>copyItem</c>, out of the buyback table) of one full unit that the stack's units join (<see cref="InventoryCommands.Join"/>), so it is full and the item keeps its partly used
+    /// charge and its traded count; the item itself takes the last. True when none are left.
+    /// </summary>
     static bool Place(Inventory into, string section, ItemInstance item)
     {
         int limit = into.LimitOf(item);
         while (into.FindCell(section, item.Width, item.Height, out int x, out int y))
         {
-            var unit = item.Quantity <= limit ? item : item.WithQuantity(limit);
+            var unit = item;
+            if (item.Quantity > 1 && item.Quantity > limit)
+            {
+                unit = item.Clone();
+                unit.Quantity = 1;
+                if (unit.MaxCharges > 0) unit.Charges = unit.MaxCharges;
+                InventoryCommands.Join(unit, item, item.Quantity - 1, limit);
+            }
             unit.Section = section;
             unit.X = x;
             unit.Y = y;
             into.Items.Add(unit);
             if (ReferenceEquals(unit, item)) return true;
-            item.Quantity -= limit;
         }
         return false;
     }
@@ -227,17 +239,18 @@ public sealed class Inventory(int width, int height)
             h.Add(i.Quality);
             h.Add(i.Charges);
             if (i.Unique) h.Add(Rng.StableHash("Unique"));
-            if (i.Buyback is { } receipt)
+            if (i.Traded != 0)
             {
                 h.Add(Rng.StableHash("Buyback"));
-                h.Add(receipt.Sell);
-                h.Add(receipt.Coins.Length);
-                foreach (long coins in receipt.Coins) h.Add(coins);
+                h.Add(i.Traded);
             }
             i.Contents?.Hash(ref h);
         }
     }
 }
+
+/// <summary>An inventory's holder (<see cref="Inventory.Holder"/>): its faction (-1 none), its squad (-1 none) and whether the faction is lawless (<see cref="PopulationData.IsLawless"/>).</summary>
+public readonly record struct InventoryHolder(int Faction, int Squad, bool Lawless);
 
 /// <summary>A rectangle of an inventory's cells (<see cref="Inventory.Regions"/>).</summary>
 public readonly record struct GridRegion(int X, int Y, int Width, int Height)

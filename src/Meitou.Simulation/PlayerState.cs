@@ -313,8 +313,11 @@ public sealed partial class PlayerSystem(PopulationData? data = null) : ITickSys
                     PickUpInput(world, pick);
                     break;
                 case Items.ArrangeInventory arrange:
-                    if (table.TryResolveNext(arrange.Character, out int character) && table.Cold(character) is { IsPlayer: true, Inventory: { } carried } &&
-                        !Items.InventoryCommands.Arrange(carried)) world.Post("Cannot arrange inventory: the items do not fit.");
+                    if (table.TryResolveNext(arrange.Character, out int character) && table.Cold(character) is { IsPlayer: true, Inventory: { } carried })
+                    {
+                        if (!arrange.Bag) Items.InventoryCommands.Arrange(carried, "main");
+                        else if (carried.Backpack?.Contents is { } bag) Items.InventoryCommands.Arrange(bag, "backpack_content", i => bag.AddTo("backpack_content", i, carried.Holder));
+                    }
                     break;
             }
         }

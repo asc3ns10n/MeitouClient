@@ -588,8 +588,10 @@ stacks start from 1 (`Inventory.Limited`). Rules: [holding an item](game/ui-scre
 Held item (`Items/HeldItems.cs`, part of `PlayerSystem`): `PlayerState.Held` is the item on the mouse with its origin (window `ItemOwner`: a character, the open trade's stock
 or a site; its root inventory, section and cell) and the character holding it. `LiftItem` takes it out (the whole stack or one unit; a fitted prosthetic comes off; a machine slot's
 units are made into an item), `PlaceHeld` places, merges or swaps it (the swapped item becomes the held one), `GiveHeld` adds it to a character in range, `DropHeld` puts it on the
-ground (own windows only), `ReturnHeld` puts it back (old cell, else `Inventory.Add`, else after arranging, else the ground). Stock goes only to the customer and is bought when placed
-(`TradeSystem.AffordHeld` / `PayHeld`, a stolen sale's `CaughtSelling`); out of the open loot it is marked stolen as a loot is and may butcher the body (`CarrySystem.TookHeld`); out of
+ground (own windows only), `ReturnHeld` puts it back (old cell, else the window's add, `InventoryCommands.TryAdd` for a character (slots, then main, never the bag) or the grid's `AddTo`, else after arranging that section, else the ground, owned by the window's character; an item lifted off a shop's trade window, a copy, left the stock at the lift and goes back as the window adds one, growing it, with a copy into the stock; when the trade closes
+it goes straight back into the stock, as the original's (`ForgottenGUI::closeInventory` returns the mouse item to the window it came from, `MouseInventory` `0x14070dbd0` ->
+`returnItem`, whose add copies it into the sources, before the window goes; **Observed**, reconstructed decompile), never onto the ground). Stock goes only to the customer and is bought when placed
+(`TradeSystem.HeldCap` / `PayHeld`, a stolen sale's `CaughtSelling`); out of the open loot it is marked stolen as a loot is and may butcher the body (`CarrySystem.TookHeld`); out of
 another faction's container it is marked stolen. It goes back each tick when its window closed or its holder is down or gone (`KeepHeld`) and before a save (`World.ReturnHeldItem`,
 `SaveCapture.Capture`). Hashed (record and quantity), not saved; the snapshot publishes `Held` and the serial of the last held command applied (`HeldSerial`).
 
@@ -1506,22 +1508,26 @@ Facts: [Prospecting](game/ui-screens.md#prospecting), [Task_Prospecting](game/ai
 
 `TradeSystem`: trader-squad stock/purse/restock, open trade, buying/selling/fencing. Charge,
 quality, culture, market, forbidden/stolen factors follow [economy.md](game/economy.md).
-A squad shop holds one 18 x 18 stock grid (the building storage size and the vanilla trader window width); `ArrangeStock` arranges it. A housed trader whose template makes no
+A squad shop holds one 18 x 18 stock grid (the building storage size and the vanilla trader window width); the trade window shows an arranged copy of it ([economy](game/economy.md#shops-and-transactions), window copy), and `ArrangeStock` re-arranges that copy and leaves the stock as it is. A housed trader whose template makes no
 prisoners or slaves and whose home has stock containers gets a building shop instead ([building shops](game/economy.md#building-shops-observed-decompile)): one stock with a rectangle
 per stock container, each container's window showing only its own (`Shop.ForBuilding`, `Shop.Building`), its own purse rule, the containers' locks opened at each fill. Stock cells stack 50 x an item's `stackable`. A housed squad with vendors that is no
 trader has its home's containers filled instead (`FillHome`). Only members that trade (`DialogueSystem.Trades`, [who trades](game/economy.md#who-trades)) publish `IsTrader`, the
-Trade verb and pointer. Shop state is hashed; the open trade is not, except its buyback receipts (below). A shop is saved on its platoon (`Saving/ShopSave`: stock, fill count,
+Trade verb and pointer. Shop state is hashed; the open trade is not, except its buyback counts (below). A shop is saved on its platoon (`Saving/ShopSave`: stock, fill count,
 `inventory refresh time`, [economy](game/economy.md#building-shops-observed-decompile)) and kept by a saved platoon that leaves the world; a save without it gets a fresh fill.
 Transfers and money changes must succeed together. Stealing from containers: [crimes](#crimes-and-bounties). Smuggling: the refusal and event 8 (`TradeSystem.Smuggling`) and the held item's prompt ([economy](game/economy.md#fencing-stealing-and-smuggling)); not built: a smuggler's own answer (read by no caller seen).
 
-Bags (engine choice; how the original trades bags and their contents is **Unknown**): a bag trades whole, the same instance with its contents grid, and only empty ("That bag
-isn't empty."), since its contents would otherwise go unpriced and unchecked for theft; a bag's contents are not shown as stock. A right click puts a bought bag into a free
+Bags: a bag trades whole and its contents are not shown as stock. The window's bag is an empty copy, so a buy gives an empty bag and takes the stock's bag with whatever it held, as
+the original's ([economy](game/economy.md#shops-and-transactions), window copy); a sale takes it with its contents (only a container's inventory refuses a bag that is not empty,
+`RClickAutoTrade`, `placeItemFromMouse`): the bag itself goes into the window, contents and all, and the stock gets an empty copy of it, so the contents stay buyable back with the bag
+until the window is made again. A bag is priced as itself, its contents not counted (`ContainerItem` inherits `InventoryItemBase::getValueSingle`, `0x1407a8f90`, **Verified**
+by the decompile project at 100 % objdiff). A right click puts a bought bag into a free
 backpack slot, else the main grid; a drag puts it where it is dropped, the backpack slot included, never into another bag. Other items: a right click tries `TryEquip`, then the grids.
 
-Buyback (the original's: [economy](game/economy.md#buyback-during-an-open-trade)): a purchase or sale leaves a receipt on the moved units (`TradeReceipt`, the coins paid per
-unit, kept through stack splits); moving them back in the same open trade costs or refunds exactly those coins and clears it. Units of the same trade and direction share a stack
-(their coins join); they top up plain stacks only when no free cell is left, losing the receipt for those units. Closing or replacing the trade voids every receipt, moved items'
-too; stacks it kept apart stay apart. Receipts are in the state hash but not saved, so a save made mid-trade reloads without them, with a different hash.
+Buyback (the original's table, [economy](game/economy.md#buyback-during-an-open-trade)): each item counts its units traded in the open trade (`ItemInstance.Traded`, the
+session's `TradeSession`); a trade of units toggles the count of the units moved, a split or a join moves the count with the units, the counted ones first
+(`ItemInstance.MoveTraded`), a change of quantity alone leaves it, and counted units trade at the opposite direction's value (`TradeSystem.Price`). Copies (the trade window's,
+the stock's, an add's split-off pieces) are new items with no count. Closing or replacing the trade voids every count. Counts are
+in the state hash but not saved, so a save made mid-trade reloads without them, with a different hash.
 
 ## Dialogue
 

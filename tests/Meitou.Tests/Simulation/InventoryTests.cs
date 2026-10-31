@@ -49,6 +49,37 @@ public class InventoryTests
     }
 
     [Fact]
+    public void Stacks_join_by_record_maker_and_material_and_their_partly_used_units_combine()
+    {
+        // The same record, maker and material join whatever their quality (canStackWith); another maker keeps apart.
+        var grid = new Inventory(8, 10);
+        Assert.True(grid.Add(Unit("cloth", 2, 20)));
+        var worse = Unit("cloth", 3, 20);
+        worse.Quality = 0.3f;
+        Assert.True(grid.Add(worse));
+        var made = Unit("cloth", 1, 20);
+        made.CompanyId = "maker";
+        Assert.True(grid.Add(made));
+        Assert.Equal([5, 1], grid.Items.Select(i => i.Quantity));
+
+        // Partly used units combine (addQuantity): four full and one at 37 of 100 are five, the last at 37. A stack spread over cells: each but the last a new full copy, the
+        // item itself last with its partly used unit.
+        static ItemInstance Ration(int n, float charges)
+        {
+            var r = Unit("ration", n, 10);
+            (r.MaxCharges, r.Charges) = (100, charges);
+            return r;
+        }
+        var food = new Inventory(8, 10);
+        Assert.True(food.Add(Ration(4, 100)));
+        Assert.True(food.Add(Ration(1, 37)));
+        Assert.Equal((5, 37f), (Assert.Single(food.Items).Quantity, food.Items[0].Charges));
+        var spread = new Inventory(8, 10);
+        Assert.True(spread.Add(Ration(25, 37)));
+        Assert.Equal([(10, 100f), (10, 100f), (5, 37f)], spread.Items.Select(i => (i.Quantity, i.Charges)));
+    }
+
+    [Fact]
     public void Npcs_are_kept_fed_by_their_hunger_floor_but_the_player_gets_nothing_free()
     {
         // A very short hunger time: three levels last under two game hours.

@@ -205,8 +205,10 @@ public class TownArtifactTests
         var artifact = data.Items.Create("book-t")!;
         artifact.Unique = true;
         Assert.True(grid.AddTo("main", artifact));
-        Assert.True(grid.AddTo("main", data.Items.Create("book-t")!));   // a plain book does not join the unique one
-        Assert.Equal(2, grid.Items.Count);
+        var plain = data.Items.Create("book-t")!;
+        Assert.True(grid.FindCell("main", plain.Width, plain.Height, out int x, out int y));
+        (plain.X, plain.Y) = (x, y);
+        grid.Items.Add(plain);   // beside it: an add would join it to the unique one (canStackWith does not compare the flag)
         var read = new Inventory(4, 4);
         ContainerSave.Read(ContainerSave.Write(grid)!, read, data.Items);
         Assert.Equal([true, false], read.Items.Select(i => i.Unique));

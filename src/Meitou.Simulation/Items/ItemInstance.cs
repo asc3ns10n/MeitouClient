@@ -17,7 +17,7 @@ public sealed class ItemInstance
     /// <summary>The armour section allowed by the record's slot; empty for other items.</summary>
     public string EquipmentSection { get; init; } = "";
     /// <summary>ARMOUR <c>is locked</c> (the original makes it a <c>LockedArmour</c>: shackles); worn, it shows the portrait's <c>Slave</c> overlay (docs/game/ui-screens.md "Portrait cells").</summary>
-    public bool IsLocked { get; init; }
+    public bool IsLocked { get; internal set; }
     /// <summary>The record's race limits (<see cref="ItemInfo.WornOnlyBy"/>, <see cref="ItemInfo.WornNeverBy"/>): who may put it in an equipment section.</summary>
     public string[] WornOnlyBy { get; init; } = [];
     public string[] WornNeverBy { get; init; } = [];
@@ -34,22 +34,39 @@ public sealed class ItemInstance
     public string Section { get; set; } = "main";
     public int X { get; set; }
     public int Y { get; set; }
-    int quantity = 1;
-    public int Quantity
+    /// <summary>The units of the stack.</summary>
+    public int Quantity { get; set; } = 1;
+    // The open trade's buyback table entry for this item: the trade, and the count it holds.
+    TradeSession? tradedIn;
+    int traded;
+    /// <summary>
+    /// The item's count in the open trade's buyback table (item -> units traded in it, <c>FUN_14070e3b0</c>, <b>Verified</b>): those units are priced at the opposite direction's value.
+    /// Only the table's own moves change it (<see cref="ToggleTraded"/>, <see cref="MoveTraded"/>), never a change of the stack's quantity, so it may be above the quantity, or below 0
+    /// after a toggle of such a stack, as the original's. 0 once the trade closed.
+    /// </summary>
+    internal int Traded => tradedIn is { Active: true } ? traded : 0;
+    /// <summary>A trade of this item, whole (<c>FUN_14070efb0</c>): no count, its quantity now is; a count, the quantity less it (none left: out of the table).</summary>
+    internal void ToggleTraded(TradeSession session)
     {
-        get => quantity;
-        set
-        {
-            if (value < quantity && Buyback is { } receipt) Buyback = receipt.Skip(quantity - value);
-            else if (value > quantity) Buyback = null;
-            quantity = value;
-        }
+        int before = Traded;
+        (tradedIn, traded) = (session, before == 0 ? Quantity : Quantity - before);
     }
-    TradeReceipt? buyback;
-    internal TradeReceipt? Buyback
+    /// <summary>
+    /// Moves <paramref name="units"/> of <paramref name="from"/>'s count to <paramref name="to"/>, or all of the count when it is less (<c>FUN_14070f0d0</c>, <b>Verified</b>): what a split
+    /// or a join of units does; nothing for an item out of the table.
+    /// </summary>
+    internal static void MoveTraded(ItemInstance from, ItemInstance to, int units)
     {
-        get => buyback is { Session.Active: true } ? buyback : null;
-        set => buyback = value;
+        if (from.Traded == 0) return;
+        int n = Math.Min(from.traded, units);
+        (to.tradedIn, to.traded) = (from.tradedIn, to.Traded + n);
+        from.traded -= n;
+    }
+    /// <summary>A split-off part back onto this stack, its count with it (<c>FUN_14070f0d0</c>).</summary>
+    internal void TakeBack(ItemInstance part)
+    {
+        MoveTraded(part, this, part.Quantity);
+        Quantity += part.Quantity;
     }
     public int Level { get; set; }
     /// <summary>The name of the smith who crafted the item at a bench (the save key <c>crafter</c>; empty: not crafted by the player's smith). The tooltip prints it with the player faction's name.</summary>
@@ -113,27 +130,46 @@ public sealed class ItemInstance
     internal bool OwnerFromSave { get; set; }
     /// <summary>
     /// One of its owner's CHARACTER / ANIMAL_CHARACTER <c>death items</c> (the save's <c>death</c>, docs/game/animals.md "Death items"): a live owner's own food search skips it, taking
-    /// it from a live owner that is down butchers the owner, and it stops being one when it leaves the owner's inventory. Its stack does not merge with ordinary units.
+    /// it from a live owner that is down butchers the owner, and it stops being one when it leaves the owner's inventory. Not compared when stacks join (<c>canStackWith</c>), so ordinary units joining its stack become death items too.
     /// </summary>
     public bool Death { get; set; }
     /// <summary>
-    /// The original's <c>Item::isUnique</c> (the save's <c>unique</c>), set on a town's artifacts (docs/game/economy.md "Artifacts"): a shop's fills and restocks leave it in place. It stacks
-    /// only with other unique items (engine choice).
+    /// The original's <c>Item::isUnique</c> (the save's <c>unique</c>), set on a town's artifacts (docs/game/economy.md "Artifacts"): a shop's fills and restocks leave it in place. Not compared when
+    /// stacks join (<c>canStackWith</c>).
     /// </summary>
     public bool Unique { get; set; }
     /// <summary>A worn backpack's contents (null for other items).</summary>
-    public Inventory? Contents { get; init; }
+    public Inventory? Contents { get => contents; init => contents = value; }
+    Inventory? contents;
     /// <summary>The factor of the contents' weight (a bag's <c>encumbrance effect</c>).</summary>
     public float ContentsFactor { get; init; } = 1;
     /// <summary>The INVENTORY_ITEM_STATE a loaded item was read from; saving copies it so the keys the engine does not model survive (null for an item made in play). Not hashed.</summary>
     public FcsRecord? Saved { get; set; }
 
-    /// <summary>A copy of this item with another quantity (a stack split off; never used for a backpack, whose contents are not copied).</summary>
+    /// <summary>
+    /// A new item like this one (the original's <c>RootObjectFactory::copyItem</c>, <c>FUN_14057c030</c>, <b>Verified</b>): the same record, maker, material, level, uniform, quality,
+    /// charges, owner and unique flag, nothing of this instance's own: no lock (shackles copy as plain armour), no prosthetic damage, no crafter, not a death item, no saved state, and a
+    /// bag an empty contents grid of the same size. Its colour is the caller's (a new item takes its record's). A shop's stock item as the trade window shows it (<see cref="Trading.TradeSystem"/>).
+    /// </summary>
+    internal ItemInstance Clone()
+    {
+        var copy = (ItemInstance)MemberwiseClone();
+        (copy.Lock, copy.IsLocked) = (null, false);
+        (copy.LimbDamage, copy.LimbWear, copy.LimbStun) = (0, 0, 0);
+        (copy.Crafter, copy.Death, copy.Saved, copy.OwnerFromSave, copy.tradedIn, copy.traded) = ("", false, null, false, null, 0);
+        if (contents is { } bag) copy.contents = new Inventory(bag.Width, bag.Height) { StackBonusMinimum = bag.StackBonusMinimum, StackBonusMult = bag.StackBonusMult };
+        return copy;
+    }
+
+    /// <summary>This item moving whole to another inventory, as the same item: every field, its lock included (the old instance is removed).</summary>
+    internal ItemInstance Moved() => (ItemInstance)MemberwiseClone();
+
+    /// <summary>A copy of this item with another quantity (a stack split off; never used for a backpack, whose contents are not copied). It is out of the buyback table: a split moves its count (<see cref="MoveTraded"/>).</summary>
     public ItemInstance WithQuantity(int quantity) => new()
     {
         Record = Record, Name = Name, Type = Type, EquipmentSection = EquipmentSection, IsLocked = IsLocked, WornOnlyBy = WornOnlyBy, WornNeverBy = WornNeverBy, MaterialId = MaterialId, CompanyId = CompanyId, Section = Section, X = X, Y = Y, Quantity = quantity, Level = Level, Crafter = Crafter, Uniform = Uniform, ColourId = ColourId,
         ItemFunction = ItemFunction, Quality = Quality, Charges = Charges, MaxCharges = MaxCharges, Width = Width, Height = Height, UnitWeight = baseWeight, DynamicWeight = DynamicWeight, StackLimit = StackLimit,
-        IsFood = IsFood, ContentsFactor = ContentsFactor, Mark = Mark, Death = Death, Unique = Unique, Buyback = Buyback?.Take(quantity),
+        IsFood = IsFood, ContentsFactor = ContentsFactor, Mark = Mark, Death = Death, Unique = Unique,
     };
 
     /// <summary>
@@ -157,7 +193,7 @@ public sealed class ItemInstance
 
 /// <summary>
 /// An item's stolen mark (<see cref="ItemInstance.Mark"/>): the faction it was stolen from (-1: not stolen), and when known the robbed character and its squad (the save's <c>ownedby</c>
-/// handle). Stacks merge only with the same mark.
+/// handle). Stacks of differing marks join only where neither is stolen (<see cref="InventoryCommands.SameKind"/>).
 /// </summary>
 public readonly record struct StolenMark(int Faction, CharacterId Owner, int Squad)
 {

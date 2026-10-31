@@ -270,7 +270,7 @@ sealed partial class PlayerInterface
         if (trade is not null && picked.Control.Properties.TryGetValue("TradeItem", out var stockIndex))
         {
             if (trade.Stock.FirstOrDefault(i => i.Index == int.Parse(stockIndex, CultureInfo.InvariantCulture)) is not { } stock) return false;
-            Say(new BuyItem(stock.Token, shift ? stock.Quantity : 1) { Tick = session.World.Tick, Equip = true });
+            Say(new BuyItem(stock.Token, shift ? stock.Quantity : 1) { Tick = session.World.Tick, Equip = true, BagFirst = faithfulScreens.IsOpen("bag") });
             return true;
         }
         if (trade is null && WindowRightClick(picked.Screen, picked.Control, shift)) return true;
@@ -280,7 +280,7 @@ sealed partial class PlayerInterface
         var token = new InventoryItemToken(item.Index, item.Record, item.Section, item.X, item.Y, item.Quantity, item.Quality);
         if (trade is not null && trade.Customer == lead.Id && InventoryCommands.IsMovableSection(item.Section))
         {
-            Sell(trade, token, shift ? item.Quantity : 1, null, 0);
+            Sell(trade, token, shift ? item.Quantity : 1);
             return true;
         }
         if (MapItemTowns?.Invoke(item.Record) is not null) Say(new ReadMapItem(lead.Id, token) { Tick = session.World.Tick });

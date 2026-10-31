@@ -163,6 +163,7 @@ sealed class CharacterAssembly(PopulationData data)
             medical.SetAnimalBody(animal.Scale(age), animal.HpMult);
         }
         cold.Inventory = inventory ?? data.Items.Build(record, cold.Appearance?.Loadout);
+        Hold(cold);
         Dye(cold, cold.Inventory);
         // Fitted prosthetics show in the limbs window: their items sit in the inventory's limb sections (saved apart, SavedLimbs).
         for (int k = 0; k < 4 && cold.Inventory is { } carried; k++)
@@ -209,6 +210,7 @@ sealed class CharacterAssembly(PopulationData data)
         cold.Medical = medical;
         if (AnimalData.From(record) is { } animal) (cold.Animal, cold.ShownAge) = (animal, age);
         cold.Inventory = data.Items.Build(record, cold.Appearance?.Loadout, seed, Rng.Key(id));
+        Hold(cold);
         if (!cold.IsPlayer && (data.PlayerFaction < 0 || cold.Faction != data.PlayerFaction)) data.Items.AddSpawnMoney(cold.Inventory, record, seed, Rng.Key(id));
         // CHARACTER `wears uniform` (CharacterHuman::setupInventorySections, Verified read; Observed use): the armour it is made wearing is its faction's uniform.
         if (record is { Type: Meitou.Data.Fcs.FcsRecordType.CHARACTER } && record.GetBool("wears uniform") && (uint)cold.Faction < (uint)data.Factions.Count)
@@ -222,4 +224,11 @@ sealed class CharacterAssembly(PopulationData data)
         // A start without a limb (CHARACTER `starting health`) shows its stump.
         if (Enumerable.Range(0, 4).Any(k => medical.LimbPart(k) is { Limb: not LimbState.Original })) RefreshEquipment(cold);
     }
+
+    /// <summary>A character's inventory is held by the character: its faction and squad as they are when asked (<see cref="Items.Inventory.Holder"/>).</summary>
+    void Hold(CharacterCold cold)
+    {
+        if (cold.Inventory is { } inventory) inventory.Holder = () => new(cold.Faction, cold.SquadId, data.IsLawless(cold.Faction));
+    }
+
 }

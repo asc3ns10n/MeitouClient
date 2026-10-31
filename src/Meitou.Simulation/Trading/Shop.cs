@@ -12,7 +12,7 @@ namespace Meitou.Simulation.Trading;
 /// <c>Platoon+0x88</c>. <b>Engine choice</b>: the stock is one inventory of <see cref="Width"/> x <see cref="Height"/> cells held by the squad, the size of the
 /// building shops' storage (<c>storage size</c> 18 x 18 in <c>gamedata.base</c>, the width of the vanilla trader window): the trader window shows its trader's <c>backpack_content</c> section (<c>FUN_140150570</c>,
 /// docs/game/ui-screens.md section 6). In the original a squad shop's stock is offered to "the inventory sections" (not decoded) and a building shop's lies in the shop building's containers (here
-/// a rectangle of the stock per container, <see cref="ForBuilding"/>).
+/// a rectangle of the stock per container, <see cref="ForBuilding"/>). The trade window shows a copy of it, arranged (<see cref="TradeSystem"/>).
 /// </summary>
 public sealed class Shop
 {
@@ -28,11 +28,11 @@ public sealed class Shop
     public long NextRestockTick { get; set; }
     /// <summary>How many times the stock was filled: the key of the next fill's rolls.</summary>
     public int Fills { get; set; }
-
-    List<GridRegion>? unused;
-
-    /// <summary>The cells of <see cref="Stock"/> outside every container (<see cref="Unused"/>, made once: the layout never changes).</summary>
-    public IReadOnlyList<GridRegion> UnusedCells => unused ??= Unused(Stock);
+    /// <summary>
+    /// Whether the last fill rolled stock: a squad shop's refresh (<c>FUN_14095ab10</c>, <b>Observed</b>) returns before it remakes an open trade window when its count rolls 0 or its
+    /// vendor lists make no item and no money. Not saved: it only matters at the fill.
+    /// </summary>
+    public bool Rolled { get; set; }
 
     /// <summary>The stock containers of a building shop (fixture ids), in the order of <see cref="Inventory.Regions"/> of <see cref="Stock"/>; empty for a squad shop.</summary>
     public IReadOnlyList<string> Containers { get; init; } = [];
@@ -40,8 +40,7 @@ public sealed class Shop
     /// <summary>
     /// A building shop of <paramref name="building"/> (the shop wrapper <c>FUN_140953850</c>, <b>Observed</b>, merges its stock containers into one section): null when the building has no
     /// stock container. <b>Engine choice</b>: the stock is one inventory as wide as the widest container (at least 18) in which each container's grid is a rectangle of its own
-    /// (<see cref="Inventory.Regions"/>), so each container holds its own items and the trade window shows them all (the cells outside every container greyed, <see cref="Unused"/>). The
-    /// rectangles are packed (<see cref="Pack"/>) in a few orders (by height, area, width, longer side, largest first; ties in the building's order) and the lowest packing is kept. The
+    /// (<see cref="Inventory.Regions"/>), so each container holds its own items. The rectangles are packed (<see cref="Pack"/>) in a few orders (by height, area, width, longer side, largest first; ties in the building's order) and the lowest packing is kept. The
     /// original's merged section is ceil(cells / width) high; this is up to ~5 % more when the containers do not tile (Squin's shops: 3 to 13 rows, and 300 random orders found none lower).
     /// </summary>
     public static Shop? ForBuilding(Meitou.Data.World.TownBuilding building, Trader terms)
@@ -97,30 +96,6 @@ public sealed class Shop
             free = [.. split.Where((r, i) => !split.Where((o, j) => j != i && o.Contains(r.X, r.Y, r.Width, r.Height) && (o != r || j < i)).Any())];
         }
         return (regions, height);
-    }
-
-    /// <summary>The cells of <paramref name="grid"/> outside its <see cref="Inventory.Regions"/> (none without them), as rectangles: runs of a row, joined down while they repeat.</summary>
-    public static List<GridRegion> Unused(Inventory grid)
-    {
-        var result = new List<GridRegion>();
-        if (grid.Regions is null) return result;
-        var open = new Dictionary<(int X, int Width), int>();   // a run of the previous row -> the index of its rectangle
-        for (int y = 0; y < grid.Height; y++)
-        {
-            var next = new Dictionary<(int X, int Width), int>();
-            for (int x = 0; x < grid.Width;)
-            {
-                if (grid.InRegion(x, y, 1, 1)) { x++; continue; }
-                int start = x;
-                while (x < grid.Width && !grid.InRegion(x, y, 1, 1)) x++;
-                var run = (start, x - start);
-                if (open.TryGetValue(run, out int k)) result[k] = result[k] with { Height = result[k].Height + 1 };
-                else { k = result.Count; result.Add(new GridRegion(start, y, x - start, 1)); }
-                next[run] = k;
-            }
-            open = next;
-        }
-        return result;
     }
 
     /// <summary>The rectangle of <see cref="Stock"/> that is container <paramref name="fixture"/>'s grid; false when it is not one of this shop's stock containers.</summary>
@@ -220,6 +195,8 @@ public static class ShopFiller
                 cats += list.MoneyItemMin + rng.NextInt(list.MoneyItemMax - list.MoneyItemMin + 1);
         }
 
+        // The original's roll counts the money items it makes (refreshSquadInventory goes on when they are all it made).
+        shop.Rolled = n > 0 && (units.Count > 0 || cats > 0);
         if (specials) AddSpecials(shop, template.Id, data.Db, market);
         // Dearest first, ties by record id so the order never depends on anything but the data.
         foreach (var item in units.OrderByDescending(u => market.UnitPrice(u, false, shop.Terms, shop.Terms.Faction)).ThenBy(u => u.Record, StringComparer.Ordinal))

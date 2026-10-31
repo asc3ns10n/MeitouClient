@@ -8,7 +8,8 @@ namespace Meitou.Simulation;
 /// The item on the mouse (docs/game/ui-screens.md section 6 "Holding an item"; the original's <c>MouseInventory</c>, <b>Observed</b> by decompile): one item at a time is lifted out of a window
 /// (<see cref="LiftItem"/>), then placed in a window's section (<see cref="PlaceHeld"/>: moved, merged onto the one stack under it, or swapped with the one item under it, which takes its place
 /// on the mouse), given to a character in the world (<see cref="GiveHeld"/>), dropped on the ground (<see cref="DropHeld"/>) or put back (<see cref="ReturnHeld"/>). Lifting from the
-/// trader's stock buys nothing: the purchase happens when it is placed in the customer's window, priced then; a sale when the customer's item is placed on the stock. The item is world
+/// trader's window takes the units off the stock (the window copy's sources) but buys nothing: the purchase happens when it is placed in the customer's window, priced then; a sale when
+/// the customer's item is placed on the window. The item is world
 /// state (<see cref="PlayerState.Held"/>); it goes back when its window closes or its holder goes down (<see cref="KeepHeld"/>) and before a save (<see cref="World.ReturnHeldItem"/>).
 /// </summary>
 public sealed partial class PlayerSystem
@@ -59,17 +60,21 @@ public sealed partial class PlayerSystem
     static bool Matches(ItemInstance? item, InventoryItemToken t, bool section = true) => item is not null && item.Record == t.Record && (!section || item.Section == t.Section)
         && item.X == t.X && item.Y == t.Y && item.Quantity == t.Quantity && item.Quality == t.Quality;
 
-    /// <summary><paramref name="units"/> of <paramref name="item"/>: the item itself when that is all of it, else a split-off copy of full units (the stack keeps its partly used one).</summary>
+    /// <summary>
+    /// <paramref name="units"/> of <paramref name="item"/>: the item itself when that is all of it, else a split-off copy (<c>takeCertainAmountFrom</c>) that keeps the stack's partly used
+    /// charge, and the rest is full again (<c>resetCharges</c>): the lift (<c>FUN_1407139a0</c>) and the placed part of a drop (<c>FUN_140715560</c>), <b>Verified</b>.
+    /// </summary>
     static ItemInstance Part(ItemInstance item, int units)
     {
         if (units >= item.Quantity) return item;
-        var part = item.WithQuantity(units);   // the first units, with their receipt's first coins
+        var part = item.WithQuantity(units);
+        ItemInstance.MoveTraded(item, part, units);
         item.Quantity -= units;
-        if (part.MaxCharges > 0) part.Charges = part.MaxCharges;
+        if (item.MaxCharges > 0) item.Charges = item.MaxCharges;
         return part;
     }
 
-    /// <summary>What a lift takes out of <paramref name="holder"/> (<c>FUN_1407139a0</c>): the whole stack when <paramref name="whole"/> or a single unit, else one unit.</summary>
+    /// <summary>What a lift takes out of <paramref name="holder"/> (<c>FUN_1407139a0</c>, <b>Verified</b>): the whole stack when <paramref name="whole"/> or a single unit, else one unit (<see cref="Part"/>).</summary>
     static ItemInstance Split(Inventory holder, ItemInstance item, bool whole)
     {
         if (whole || item.Quantity <= 1)
@@ -111,7 +116,9 @@ public sealed partial class PlayerSystem
                 if (world.SystemOf<Trading.TradeSystem>()?.OpenStock(world, out var buyer) is not { } stock || buyer != lift.Actor) return;
                 var item = stock.All().ElementAtOrDefault(t.Index);
                 if (!Matches(item, t) || HolderOf(stock, item!) is not { } holder) return;
-                Hold(world, lift, Split(holder, item!, lift.Whole), stock, item!.Section, item.X, item.Y);
+                var unit = Split(holder, item!, lift.Whole);
+                Hold(world, lift, unit, stock, item!.Section, item.X, item.Y);
+                world.SystemOf<Trading.TradeSystem>()!.FromStock(unit, unit.Quantity);
                 return;
             }
             case ItemHolder.Site:
@@ -249,10 +256,11 @@ public sealed partial class PlayerSystem
     }
 
     /// <summary>
-    /// Places the held item (<c>FUN_140715560</c>, <b>Observed</b>): the section must take it (<see cref="InventoryCommands.SlotRefusal(string, FcsRecordType, string, Inventory?, bool)"/>, a worn slot only what the owner's race may wear, a limited storage its items, a prosthetic slot a
-    /// stump of its side); the cell is the drop's, moved inside the section (a footprint larger than the section is refused); two or more items under it refuse it; one locked on refuses it
-    /// ("Item is locked in place."); one of the same kind takes what its stack has room for (the rest stays on the mouse; a full stack takes nothing); any other is swapped. Between the stock
-    /// and the customer the units are capped to what the payer can afford and paid; a stolen item put on a stock that is no fence may get the seller caught. A refusal puts the item back.
+    /// Places the held item (<c>FUN_140715560</c>, <b>Verified</b>, docs/game/ui-screens.md "Holding an item"): the section must take it (<see cref="InventoryCommands.SlotRefusal(string, FcsRecordType, string, Inventory?, bool)"/>, a worn slot only what the owner's race may wear, a limited
+    /// storage its items, a prosthetic slot a stump of its side); the cell is the drop's, moved inside the section (a footprint larger than the section is refused); two or more items
+    /// under it refuse it; one locked on refuses it ("Item is locked in place."). At most a stack is placed, between the stock and the customer at most what the payer can afford, paid
+    /// (a stolen item put on a stock that is no fence may get the seller caught); the units over stay on the mouse. One of its kind under it with room for all of it joins the held item;
+    /// otherwise the held item takes what it can of the one under it and what is left of that goes onto the mouse, the held units over going back. A refusal puts the item back.
     /// </summary>
     void Place(World world, PlaceHeld place)
     {
@@ -299,16 +307,9 @@ public sealed partial class PlayerSystem
             if (item.Width > target.Columns || item.Height > target.Rows) { ReturnHeldItem(world); return; }
             x = Math.Clamp(place.X, 0, target.Columns - item.Width);
             y = Math.Clamp(place.Y, 0, target.Rows - item.Height);
-            if (!target.Grid.InRegion(x, y, item.Width, item.Height))
-            {
-                // On a shop's greyed cells, or across two of its containers (engine message).
-                world.Post("No room for that item.");
-                ReturnHeldItem(world);
-                return;
-            }
             under = target.Grid.Items.Where(i => i.Section == target.Section && x < i.X + i.Width && i.X < x + item.Width && y < i.Y + i.Height && i.Y < y + item.Height).ToList();
         }
-        if (under.Count >= 2) { ReturnHeldItem(world); return; }
+        if (under.Count >= 2 || under.Count == 0 && InventoryCommands.ItemsLimitReached(target.Grid, target.Section)) { ReturnHeldItem(world); return; }
         if (under is [{ LockedOn: true }])
         {
             world.Post("Item is locked in place.");
@@ -317,66 +318,86 @@ public sealed partial class PlayerSystem
         }
         if (into != held.From && Caught(world, held, Crime.CrimeSystem.TakeKind.Drag)) { ReturnHeldItem(world); return; }
         int limit = target.Columns == 0 ? 1 : target.Grid.LimitOf(item);
-        // Leaving its window for another owner's: no longer a death item, maybe stolen. Put back on a refusal; the units that stay on the mouse keep the old marks.
+        // Leaving its window for another owner's: no longer a death item, maybe stolen. Put back on a refusal; the units that go back keep the old marks.
         bool changes = into != held.From, death = item.Death;
         var mark = item.Mark;
         if (changes) (item.Death, item.Mark) = (false, MarkFor(world, held, target.Owner));
         void Undo(ItemInstance i) => (i.Death, i.Mark) = (death, mark);
-        // The units the trade lets through (all of them outside a trade); 0: refused, put back.
-        int Exchange(int units, bool all)
-        {
-            if (!buy && !sell) return units;
-            if (item.Contents is { Items.Count: > 0 }) { world.Post(Trading.TradeSystem.BagNotEmpty); return 0; }
-            if (sell && trade!.CaughtSelling(world, item)) return 0;
-            int k = trade!.AffordHeld(world, item, units, sell);
-            if (all && k is > 0 && k < units) { world.Post(sell ? "The shopkeeper can't afford that." : "You can't afford that."); return 0; }
-            return k;
-        }
         void Refuse() { Undo(item); ReturnHeldItem(world); }
+        // The trade window's remove and add callbacks keep its stock in step: an item taken off it leaves the stock, the item added onto it puts a copy in.
+        bool window = into.Holder == ItemHolder.Stock;
 
-        if (under is [var other])
+        // At most a stack and what the payer's money covers at the plain unit value (HeldCap); the units over that are split off, taking the traded ones first and refilled, and
+        // what is placed is priced as it is, then paid or refused whole.
+        int maximum = limit;
+        if (buy || sell)
         {
-            if (target.Columns > 0 && limit > 1 && InventoryCommands.Stackable(item, other))
-            {
-                int room = Math.Min(limit - other.Quantity, item.Quantity);
-                if (room <= 0) { Undo(item); return; }   // a full stack: the item stays on the mouse
-                int n = Exchange(room, all: false);
-                if (n <= 0) { Refuse(); return; }
-                // Units of the same trade and direction keep their coins in the joined stack.
-                var (kept, coming) = (other.Buyback, buy || sell ? trade!.PayHeld(world, item, n, sell) : item.Buyback?.Take(n));
-                InventoryCommands.Merge(other, item, n);
-                if (kept is not null && coming is not null && kept.Joins(coming)) other.Buyback = kept.Append(coming);
-                // The merged stack lies at the drop's cell.
-                (other.X, other.Y) = (x, y);
-                if (item.Quantity <= 0) player.Held = null;
-                else Undo(item);
-                if (changes) LeftLoot(world, held, death);
-                Touched(world, held, target);
-                return;
-            }
-            // A swap: the held item takes the other's place, the other goes onto the mouse.
-            if (item.Quantity > limit || Exchange(item.Quantity, all: true) <= 0) { Refuse(); return; }
-            if (buy || sell) item.Buyback = trade!.PayHeld(world, item, item.Quantity, sell);
-            target.Grid.Items.Remove(other);
-            if (InventoryCommands.LimbSlotOf(target.Section) is >= 0 and var fitted) target.Owner?.Medical?.RemoveReplacement(fitted);
-            Put(target, item, x, y);
-            player.Held = new HeldItem { Item = other, From = into, Grid = target.Root, Section = other.Section, X = other.X, Y = other.Y, Actor = held.Actor };
-            if (changes) LeftLoot(world, held, death);
-            Touched(world, held, target);
+            if (sell && trade!.CaughtSelling(world, item)) { Refuse(); return; }
+            maximum = Math.Min(maximum, trade!.HeldCap(world, item, sell));
+        }
+        var rest = item.Quantity > maximum && maximum > 0 ? Rest(item, item.Quantity - maximum) : null;
+        if ((buy || sell) && !trade!.PayHeld(world, item, item.Quantity, sell))
+        {
+            if (rest is not null) item.TakeBack(rest);
+            Refuse();
             return;
         }
+        if (buy || sell) trade!.Traded(item);
+        if (rest is not null) Undo(rest);
+        void Off(ItemInstance old)
         {
-            int n = Exchange(Math.Min(limit, item.Quantity), all: false);
-            if (n <= 0) { Refuse(); return; }
-            var receipt = buy || sell ? trade!.PayHeld(world, item, n, sell) : null;
-            var unit = Part(item, n);
-            if (buy || sell) unit.Buyback = receipt;
-            Put(target, unit, x, y);
-            if (ReferenceEquals(unit, item)) player.Held = null;
-            else Undo(item);
-            if (changes) LeftLoot(world, held, death);
-            Touched(world, held, target);
+            target.Grid.Items.Remove(old);
+            if (window) trade!.FromStock(old, old.Quantity);
+            if (InventoryCommands.LimbSlotOf(target.Section) is >= 0 and var fitted) target.Owner?.Medical?.RemoveReplacement(fitted);
         }
+        HeldItem? taken = null;
+        var holder = target.Root.Holder?.Invoke();
+        if (under is [var old])
+        {
+            int before = old.Quantity;
+            bool joins = (target.Columns == 0 ? 1 : target.Grid.LimitOf(old)) > old.Quantity && InventoryCommands.SameKind(old, item, holder, old);
+            if (joins && old.Quantity + item.Quantity <= limit)
+            {
+                // All of it joins the held item, which lies at the drop's cell. Taken off first, the one under it is held by nobody when it joins, so a mark that was not stolen there
+                // now is, and against an unmarked held item it does not join and is lost, as the original's.
+                Off(old);
+                int left = InventoryCommands.Join(item, old, before, limit);
+                ItemInstance.MoveTraded(old, item, before - left);
+            }
+            else
+            {
+                // The held item takes what it can of the one under it (none of another kind); what is left of that goes onto the mouse, the held rest back where it came from. One of
+                // its kind with room always sends the rest back, even when the partly used charges let the held item take it all (the original then holds it at 0 units; Meitou holds
+                // nothing); one full or of another kind taken in whole leaves the rest on the mouse.
+                int left = InventoryCommands.Join(item, old, before, limit, holder, old);
+                if (before > left) ItemInstance.MoveTraded(old, item, before - left);
+                if (left >= 1) taken = new HeldItem { Item = old, From = into, Grid = target.Root, Section = old.Section, X = old.X, Y = old.Y, Actor = held.Actor };
+                Off(old);
+                if ((taken is not null || joins) && rest is not null)
+                {
+                    Return(world, held, rest);
+                    rest = null;
+                }
+            }
+        }
+        Put(target, item, x, y);
+        if (window) trade!.ToStock(item, item.Quantity);
+        player.Held = taken ?? (rest is null ? null : new HeldItem { Item = rest, From = held.From, Grid = held.Grid, Section = held.Section, X = held.X, Y = held.Y, Actor = held.Actor });
+        if (changes) LeftLoot(world, held, death);
+        Touched(world, held, target);
+    }
+
+    /// <summary>
+    /// The last <paramref name="units"/> of a held stack split off (<c>takeCertainAmountFrom</c>): they take its traded count first (<see cref="ItemInstance.MoveTraded"/>) and are full again
+    /// (<c>resetCharges</c>); the placed part keeps the partly used charge.
+    /// </summary>
+    static ItemInstance Rest(ItemInstance item, int units)
+    {
+        var rest = item.WithQuantity(units);
+        ItemInstance.MoveTraded(item, rest, units);
+        item.Quantity -= units;
+        if (rest.MaxCharges > 0) rest.Charges = rest.MaxCharges;
+        return rest;
     }
 
     /// <summary>Puts an item into the target's section at (<paramref name="x"/>, <paramref name="y"/>); a prosthetic is fitted on its stump.</summary>
@@ -518,7 +539,12 @@ public sealed partial class PlayerSystem
         var player = world.Player;
         if (player.Held is not { } held) return;
         player.Held = null;
-        var item = held.Item;
+        Return(world, held, held.Item);
+    }
+
+    /// <summary><paramref name="item"/> back where the held item <paramref name="held"/> came from, as <see cref="ReturnHeldItem"/> puts it (<c>returnItem</c>).</summary>
+    void Return(World world, HeldItem held, ItemInstance item)
+    {
         if (held.Grid is not { } root)
         {
             if (world.Machines.Find(held.From.Site) is { } m)
@@ -538,13 +564,23 @@ public sealed partial class PlayerSystem
         var table = world.Characters;
         var owner = held.From.Holder == ItemHolder.Character && table.TryResolveNext(held.From.Character, out int s) ? table.Cold(s) : null;
         if (held.From.Holder == ItemHolder.Site) world.Machines.Touch();
+        // A copy lifted off the trade window goes back as the window adds an item (its old cell when free), which grows it rather than failing, and a copy into the stock.
+        if (held.From.Holder == ItemHolder.Stock) { world.SystemOf<Trading.TradeSystem>()?.ShowAgain(root, item, held.X, held.Y); return; }
         var grid = held.Section == "backpack_content" ? root.Backpack?.Contents : root;
         if (grid is not null && BackInPlace(grid, held, item, owner))
         {
             if (owner is not null && (InventoryCommands.IsEquipmentSection(held.Section) || InventoryCommands.IsLimbSection(held.Section))) assembly?.RefreshEquipment(owner);
             return;
         }
-        if (root.Add(item) || InventoryCommands.Arrange(root) && root.Add(item)) return;
+        if (grid is null) { if (DropSpot(world, held) is var (lost, by)) Ground(world, item, lost, by); return; }
+        // Else the window's inventory takes it (returnItem): a character's equipment sections that take it, then its main grid (tryAddItem), a bag's or a container's grid; failing
+        // that, after arranging it; failing that, it is dropped, its owner the window's character.
+        string section = ReferenceEquals(grid, root) ? "main" : "backpack_content";
+        bool Add() => owner is not null && ReferenceEquals(grid, root) ? InventoryCommands.TryAdd(root, item, owner) : grid.AddTo(section, item, root.Holder);
+        if (Add()) { if (owner is not null && InventoryCommands.IsEquipmentSection(item.Section)) assembly?.RefreshEquipment(owner); return; }
+        InventoryCommands.Arrange(grid, section, i => grid.AddTo(section, i, root.Holder));
+        if (Add()) { if (owner is not null && InventoryCommands.IsEquipmentSection(item.Section)) assembly?.RefreshEquipment(owner); return; }
+        if (owner is not null) item.Mark = StolenMark.Of(owner, held.From.Character);
         if (DropSpot(world, held) is var (at, from)) Ground(world, item, at, from);
     }
 
@@ -566,8 +602,7 @@ public sealed partial class PlayerSystem
         else
         {
             var (w, h) = InventoryCommands.IsEquipmentSection(section) ? InventoryCommands.SectionSize(section) : (grid.Width, grid.Height);
-            if (held.X < 0 || held.Y < 0 || held.X + item.Width > w || held.Y + item.Height > h || item.Quantity > grid.LimitOf(item)
-                || !grid.IsFree(section, held.X, held.Y, item.Width, item.Height)) return false;
+            if (held.X < 0 || held.Y < 0 || held.X + item.Width > w || held.Y + item.Height > h || !grid.IsFree(section, held.X, held.Y, item.Width, item.Height)) return false;
         }
         (item.Section, item.X, item.Y) = (section, held.X, held.Y);
         grid.Items.Add(item);
@@ -619,7 +654,7 @@ public sealed partial class PlayerSystem
             // A fitted prosthetic comes off into the grid (else the open bag) when it fits there.
             if (cold.Medical?.LimbPart(fitted) is not { Limb: Bodies.LimbState.Replaced } part || part.ReplacementItem != item) return;
             holder.Items.Remove(item);
-            if (!root.AddTo("main", item) && !(bag?.AddTo("backpack_content", item) ?? false)) { holder.Items.Add(item); return; }
+            if (!root.AddTo("main", item) && !(bag?.AddTo("backpack_content", item, root.Holder) ?? false)) { holder.Items.Add(item); return; }
             cold.Medical.RemoveReplacement(fitted);
             assembly?.RefreshEquipment(cold);
             return;
@@ -627,7 +662,7 @@ public sealed partial class PlayerSystem
         bool worn = InventoryCommands.IsEquipmentSection(from);
         bool Step(ItemInstance unit)
         {
-            if (worn) return root.AddTo("main", unit) || (bag?.AddTo("backpack_content", unit) ?? false);
+            if (worn) return root.AddTo("main", unit) || (bag?.AddTo("backpack_content", unit, root.Holder) ?? false);
             if (InventoryCommands.TryEquip(root, unit, cold)) return true;
             if (unit.Type == FcsRecordType.CONTAINER && unit.Contents is not null && from == "main" && !root.Items.Exists(i => i.Section == "backpack_attach"))
             {
@@ -646,7 +681,7 @@ public sealed partial class PlayerSystem
                 (unit.LimbDamage, unit.LimbWear, unit.LimbStun) = (0, 0, 0);
                 return true;
             }
-            return from == "main" && bag is not null && bag.AddTo("backpack_content", unit);
+            return from == "main" && bag is not null && bag.AddTo("backpack_content", unit, root.Holder);
         }
         int want = quick.All ? item.Quantity : 1, moved = 0;
         while (moved < want)

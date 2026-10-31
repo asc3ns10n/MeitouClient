@@ -31,23 +31,23 @@ public class InventoryCommandTests
         Assert.True(InventoryCommands.Move(inventory, Token(1, item), "main", 1, 1));
         Assert.Empty(bag.Items); Assert.Contains(item, inventory.Items);
         var tooBig = new ItemInstance { Record = "oversized", Width = 4, X = 9, Y = 9 }; inventory.Items.Add(tooBig);
-        Assert.False(InventoryCommands.Arrange(inventory)); Assert.Equal((1, 1), (item.X, item.Y)); Assert.Equal((9, 9), (tooBig.X, tooBig.Y));
+        InventoryCommands.Arrange(inventory, "main"); Assert.Equal((1, 1), (item.X, item.Y)); Assert.Equal((9, 9), (tooBig.X, tooBig.Y));   // no pass fits: back to the old cells
         inventory.Items.Remove(tooBig);
-        Assert.True(InventoryCommands.Arrange(inventory)); Assert.Equal((0, 0), (item.X, item.Y));
+        InventoryCommands.Arrange(inventory, "main"); Assert.Equal((0, 0), (item.X, item.Y));
     }
     [Fact]
-    public void TryEquipFillsTheBackThenTheHipAndRefusesWhenBothAreFull()
+    public void TryEquipFillsTheHipThenTheBackAndRefusesWhenBothAreFull()
     {
+        // The character's section order and items limits (CharacterHuman::setupInventorySections): hip first, one item; back, two.
         var inventory = new Inventory();
         ItemInstance Weapon(int width) => new() { Record = "w", Type = Meitou.Data.Fcs.FcsRecordType.WEAPON, Width = width, Height = 1 };
-        var (a, b, c, d, e) = (Weapon(5), Weapon(5), Weapon(10), Weapon(7), Weapon(7));
+        var (a, b, c, d) = (Weapon(5), Weapon(5), Weapon(10), Weapon(7));
         Assert.True(InventoryCommands.TryEquip(inventory, a));
         Assert.True(InventoryCommands.TryEquip(inventory, b));
         Assert.True(InventoryCommands.TryEquip(inventory, c));
-        Assert.True(InventoryCommands.TryEquip(inventory, d));
-        Assert.False(InventoryCommands.TryEquip(inventory, e));
-        Assert.Equal(("back", 0, 0, "back", 5, 0), (a.Section, a.X, a.Y, b.Section, b.X, b.Y));
-        Assert.Equal(("back", 0, 1, "hip", 0, 0), (c.Section, c.X, c.Y, d.Section, d.X, d.Y));
-        Assert.DoesNotContain(e, inventory.Items);
+        Assert.False(InventoryCommands.TryEquip(inventory, d));
+        Assert.Equal(("hip", 0, 0, "back", 0, 0), (a.Section, a.X, a.Y, b.Section, b.X, b.Y));
+        Assert.Equal(("back", 0, 1), (c.Section, c.X, c.Y));
+        Assert.DoesNotContain(d, inventory.Items);
     }
 }

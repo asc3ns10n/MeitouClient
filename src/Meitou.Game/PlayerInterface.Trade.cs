@@ -177,11 +177,6 @@ sealed partial class PlayerInterface
         var slot = controls.First(c => c.Name == gridName);
         int columns = Math.Max(1, trade.StockWidth), rows = Math.Max(1, trade.StockHeight);
         var area = slot.Bounds;
-        // A building shop's cells outside every container hold nothing: greyed over the grid's tiles.
-        foreach (var (r, k) in trade.Unused.Select((r, k) => (r, k)))
-            controls.Add(new($"trade-unused-{k}", "Widget",
-                new(area.X + r.X * area.Width / columns, area.Y + r.Y * area.Height / rows, r.Width * area.Width / columns, r.Height * area.Height / rows),
-                "", "", "", true, new Dictionary<string, string>(), new Vector4(0, 0, 0, 0.65f), Pickable: false, Clip: slot.Clip));
         foreach (var item in trade.Stock)
         {
             if (Lifted(ItemOwner.Stock, item.Index)) continue;
@@ -226,9 +221,9 @@ sealed partial class PlayerInterface
     /// Sends a sale. A stolen item that a shop which is no fence may catch first asks (<c>FUN_140715290</c>, <b>Observed</b> by decompile): "You have a {N}% chance of getting caught selling this
     /// stolen item.\nFence it anyway?" under the title "Fencing Item", N = 100 less the chance of getting away in per cent, rounded half up; only Yes sells.
     /// </summary>
-    void Sell(TradeView trade, InventoryItemToken token, int quantity, int? x, int y)
+    void Sell(TradeView trade, InventoryItemToken token, int quantity)
     {
-        var sale = new SellItem(token, quantity) { Tick = session.World.Tick, X = x, Y = y };
+        var sale = new SellItem(token, quantity) { Tick = session.World.Tick };
         if (trade.Goods.FirstOrDefault(g => g.Index == token.Index) is not { FenceOdds: { } odds })
         {
             Say(sale);

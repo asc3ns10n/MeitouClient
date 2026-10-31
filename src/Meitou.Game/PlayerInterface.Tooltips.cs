@@ -461,15 +461,13 @@ sealed partial class PlayerInterface
     {
         /// <summary>Only the name (the machine slots' items, which the original's tooltip shows the same way).</summary>
         public bool Brief { get; init; }
-        /// <summary>The customer's own item while trading (its Sell value is the transfer's price); otherwise a stock item's Value is.</summary>
-        public bool Goods { get; init; }
         /// <summary>The smith who crafted the item ("" none); its tooltip ends with the crafted-by block.</summary>
         public string Crafter { get; init; } = "";
         /// <summary>The item's <c>unique</c> flag: the [Unique] marker row.</summary>
         public bool Unique { get; init; }
         public static ItemTip NameOnly(string record, string material, string name, int quantity) => new(record, material, name, quantity, 0, 0, "", 0, 0, 0, -1, null, null) { Brief = true };
         public static ItemTip Of(InventoryItemView v, TradeItemView? trade = null, string? mapNote = null) =>
-            new(v.Record, v.Material, v.Name, v.Quantity, v.Weight, v.Quality, v.Company, v.Level, v.Charges, v.MaxCharges, v.StolenFrom, trade, mapNote) { Goods = trade is not null, Crafter = v.Crafter, Unique = v.Unique };
+            new(v.Record, v.Material, v.Name, v.Quantity, v.Weight, v.Quality, v.Company, v.Level, v.Charges, v.MaxCharges, v.StolenFrom, trade, mapNote) { Crafter = v.Crafter, Unique = v.Unique };
         public static ItemTip Of(TradeItemView v) =>
             new(v.Record, v.Material, v.Name, v.Quantity, v.Weight, v.Quality, v.Company, v.Level, v.Charges, v.MaxCharges, v.StolenFrom, v, null) { Unique = v.Unique };
     }
@@ -565,7 +563,8 @@ sealed partial class PlayerInterface
         var research = ItemRecordOf?.Invoke(t.Company) is { Type: Meitou.Data.Fcs.FcsRecordType.RESEARCH } r ? r : null;
         string name = research?.Name ?? (t.Brief && model is not null ? model + " " + t.Name : t.Name);
         var lines = new List<TooltipLine> { new(t.Quantity > 1 ? $"{name} ({t.Quantity})" : name, "", TooltipTone.Title) };
-        if (t.Trade is { Buyback: true }) lines.Add(new("Buyback", ""));
+        // The traded units' count follows when not all of the stack was traded (FUN_1407a13a0).
+        if (t.Trade is { Buyback: true } bought) lines.Add(new(bought.BuybackUnits != bought.Quantity ? $"Buyback ({bought.BuybackUnits})" : "Buyback", ""));
         if (t.Brief) return lines;
         if (research is not null)
         {
@@ -696,9 +695,8 @@ sealed partial class PlayerInterface
             // Value and Sell value: one unit's prices (slot 81), with the trader factor as a mark-up in the bad colour (FUN_14079e7a0).
             int percent = trade.PriceFactor > 1 ? (int)((trade.PriceFactor - 1) * 100) : trade.PriceFactor < 1 ? (int)((1 - trade.PriceFactor) * 100) : 0;
             string suffix = trade.PriceFactor == 1 ? "" : $" ({(trade.PriceFactor > 1 ? "+" : "-")}{percent}%)";
-            // A buyback price is the exact refund, not marked up.
-            lines.Add(new("-Value", "c." + Money(trade.Value), TooltipTone.Ink, TooltipTone.Ink, trade.Buyback && !t.Goods ? "" : suffix, TooltipTone.Bad));
-            lines.Add(new("-Sell value", "c." + Money(trade.SellValue), TooltipTone.Ink, TooltipTone.Ink, trade.Buyback && t.Goods ? "" : suffix, TooltipTone.Bad));
+            lines.Add(new("-Value", "c." + Money(trade.Value), TooltipTone.Ink, TooltipTone.Ink, suffix, TooltipTone.Bad));
+            lines.Add(new("-Sell value", "c." + Money(trade.SellValue), TooltipTone.Ink, TooltipTone.Ink, suffix, TooltipTone.Bad));
         }
         else if (PricesOf?.Invoke(t) is { } prices)
         {

@@ -82,7 +82,11 @@ public sealed partial class ProductionSystem : ITickSystem, ITaskOwner, ITaskHan
     public ProductionSystem(PopulationData data, ProductionSettings? settings = null)
         : this(data.Db, data.Bodies.Constants, data.BodyOptions, data.Items, data.Biomes, settings, data.ResourceNodes)
     {
+        lawless = data.IsLawless;
     }
+
+    // Whether a faction is lawless (PopulationData.IsLawless; null: none is), for who holds a storage's items.
+    readonly Func<int, bool>? lawless;
 
     public ProductionSettings Settings { get; }
     /// <summary>See <see cref="ProductionSettings.UnloadedProduction"/>; the host sets it live.</summary>
@@ -113,8 +117,15 @@ public sealed partial class ProductionSystem : ITickSystem, ITaskOwner, ITaskHan
     {
         if (world.Machines.Find(site.Id) is { } existing) return existing;
         if (Create(world, site) is not { } m) return null;
+        Hold(m, site);
         world.Machines.Add(m);
         return m;
+    }
+
+    /// <summary>A machine's storage's items are held by its site's owner (<c>isStolen</c>: the building's faction).</summary>
+    void Hold(Machine m, BuildSite site)
+    {
+        if (m.Storage is { } storage) storage.Holder = () => new(site.Owner, -1, lawless?.Invoke(site.Owner) ?? false);
     }
 
     Machine? Create(World world, BuildSite site)
@@ -191,6 +202,7 @@ public sealed partial class ProductionSystem : ITickSystem, ITaskOwner, ITaskHan
             sweep = true;
             return;
         }
+        Hold(m, site);
         var at = old.Position;
         void Drop(ItemInstance? item) { if (item is not null) world.GroundItems.Drop(item, at, 0); }
         foreach (var i in old.Inputs)

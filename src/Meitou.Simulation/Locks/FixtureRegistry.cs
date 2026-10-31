@@ -132,11 +132,11 @@ public sealed partial class FixtureRegistry
         if (record is not null && !(Saved?.GetValueOrDefault(b.Key)?.Bools.GetValueOrDefault("destroyed", b.Destroyed) ?? b.Destroyed))
         {
             AddDoors(world, db, record, b.Key, site, owner, faction, b.Position, b.Yaw, list);
-            if (Lockable(db, record) is { } own) list.Add(Make(world, db, own, b.Key, b.Key, record, site, owner, faction, b.Position, b.Yaw));
+            if (Lockable(db, record) is { } own) list.Add(Make(world, data, db, own, b.Key, b.Key, record, site, owner, faction, b.Position, b.Yaw));
         }
         foreach (var f in b.Fixtures)
             if (db.Find(f.RecordId) is { } item && (Lockable(db, item) ?? (f.StorageWidth > 0 && f.StorageHeight > 0 ? FixtureKind.Container : null)) is { } kind)
-                list.Add(Make(world, db, kind, f.Id, b.Key, item, site, owner, faction, f.Position, f.Yaw, f.StorageWidth, f.StorageHeight));
+                list.Add(Make(world, data, db, kind, f.Id, b.Key, item, site, owner, faction, f.Position, f.Yaw, f.StorageWidth, f.StorageHeight));
         int bed = 0;
         foreach (var spot in b.Spots)
         {
@@ -205,7 +205,7 @@ public sealed partial class FixtureRegistry
         AddDoors(world, data.Db, record, site.Id, -1, site.Owner, faction, site.Position, yaw, list);
         if (own is { } kind)
         {
-            var made = Make(world, data.Db, kind, site.Id, site.Id, record, -1, site.Owner, faction, site.Position, yaw, host: record.StringId);
+            var made = Make(world, data, data.Db, kind, site.Id, site.Id, record, -1, site.Owner, faction, site.Position, yaw, host: record.StringId);
             if (made.Lock is { } l) l.OwnerBroken = world.Machines.Find(site.Id)?.Broken == true;
             list.Add(made);
         }
@@ -291,11 +291,11 @@ public sealed partial class FixtureRegistry
     static string? FirstClip(GameDatabase db, GameRecord functionality, string list) =>
         functionality.GetReferences(list) is [var first, ..] ? db.Find(first.TargetStringId)?.Name : null;
 
-    Fixture Make(World world, GameDatabase db, FixtureKind kind, string id, string building, GameRecord record, int site, int owner, FactionData? faction, Vector3 at, float yaw, int storageWidth = 0, int storageHeight = 0, string host = "")
+    Fixture Make(World world, PopulationData data, GameDatabase db, FixtureKind kind, string id, string building, GameRecord record, int site, int owner, FactionData? faction, Vector3 at, float yaw, int storageWidth = 0, int storageHeight = 0, string host = "")
     {
         var functionality = TownBuildings.FunctionOf(db, record, functions);
         bool locked = kind != FixtureKind.Container || record.GetBool("has lock");
-        return new Fixture
+        var made = new Fixture
         {
             Id = id, Building = building, Kind = kind, RecordId = record.StringId, Site = site, Owner = owner, Position = at, Yaw = yaw, HostRecordId = host,
             Clips = kind == FixtureKind.Cage && functionality is not null ? new CageClips(FirstClip(db, functionality, "animation"), FirstClip(db, functionality, "animation KO"), FirstClip(db, functionality, "animation dazed")) : default,
@@ -303,6 +303,9 @@ public sealed partial class FixtureRegistry
             Contents = kind == FixtureKind.Container && storageWidth > 0 && storageHeight > 0 ? new Meitou.Simulation.Items.Inventory(storageWidth, storageHeight) { StackBonusMult = record.GetFloat("stackable bonus mult", 1) } : null,
             Lock = !locked ? null : new LockState { Level = RollLevel(world.Seed, id, faction, IntOf(record, "lock level bonus"), door: false), Hardness = FloatOf(record, "hardness") },
         };
+        // A container's items are held by it, of its owner's faction as it is when asked (isStolen: the box's owner).
+        if (made.Contents is { } contents) contents.Holder = () => new(made.Owner, -1, data.IsLawless(made.Owner));
+        return made;
     }
 
     /// <summary>The lock level at creation (docs/game/locks.md "Lock object", <b>Verified</b> formula; the roll is Meitou's seeded stream).</summary>

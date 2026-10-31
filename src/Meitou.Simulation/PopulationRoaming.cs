@@ -511,7 +511,7 @@ public sealed partial class PopulationSystem
     /// list order) that is not down and stands in an active zone, which is cached as the backup; else the leader itself, down or not. The member scan is skipped while the leader is in
     /// a bed or cage: the original tests the <i>leader's</i> bed or cage state there, not the member's (<b>Verified</b> by the decompile; possibly a slip of the original).
     /// </summary>
-    CharacterId EffectiveLeader(World world, Squad squad)
+    internal CharacterId EffectiveLeader(World world, Squad squad)
     {
         var table = world.Characters;
         if (Standing(table, squad.Leader)) return squad.Leader;

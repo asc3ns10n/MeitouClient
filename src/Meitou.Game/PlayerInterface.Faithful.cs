@@ -124,7 +124,7 @@ sealed partial class PlayerInterface
         {
             if (e.Widget == "OpenBagButton") ToggleBag();
             else if (e.Widget == "LimbsButton") ToggleLimbs();
-            else if (e.Widget == "ArrangeButton" && WindowCharacter(e.Screen) is { } lead) Say(new Meitou.Simulation.Items.ArrangeInventory(lead.Id) { Tick = session.World.Tick });
+            else if (e.Widget == "ArrangeButton" && WindowCharacter(e.Screen) is { } lead) Say(new Meitou.Simulation.Items.ArrangeInventory(lead.Id) { Bag = e.Screen == "bag", Tick = session.World.Tick });
         }
     }
     UiBindings BindFaithfulScreen(string id)

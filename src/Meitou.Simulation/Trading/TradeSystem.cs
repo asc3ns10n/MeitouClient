@@ -9,31 +9,30 @@ public sealed record OpenTrade(CharacterId Customer, CharacterId Trader) : Order
 /// <summary>Closes the open trade.</summary>
 public sealed record CloseTrade : SimCommand;
 /// <summary>
-/// Buys <see cref="Quantity"/> units of the stock item <see cref="Item"/> (its index in the shop's stock) into the customer's inventory: at the cell <see cref="X"/>, <see cref="Y"/> of
-/// <see cref="Section"/> (<c>main</c> or <c>backpack_content</c>, the cell the item was dropped on) when that is free, else wherever it fits.
-/// A backpack may also target the single <c>backpack_attach</c> equipment slot.
+/// The trade window's right click on a stock item (<c>RClickAutoTrade</c>, with Shift <c>RClickAutoTradeAll</c>): buys up to <see cref="Quantity"/> units of <see cref="Item"/> (its index in
+/// the window's copy of the shop's stock, <see cref="TradeView.Stock"/>) a unit at a time into the customer's inventory, where they first fit. A drag is <see cref="LiftItem"/> and
+/// <see cref="PlaceHeld"/>.
 /// </summary>
 public sealed record BuyItem(InventoryItemToken Item, int Quantity) : SimCommand
 {
-    public string? Section { get; init; }
-    public int X { get; init; }
-    public int Y { get; init; }
-    /// <summary>The window's right click (no cell chosen): one unit goes into the equipment slot that takes it when that is free, before the grids (<see cref="InventoryCommands.TryEquip"/>).</summary>
+    /// <summary>One unit goes into the equipment slot that takes it when that is free, before the grids (<see cref="InventoryCommands.TryEquip"/>).</summary>
     public bool Equip { get; init; }
+    /// <summary>
+    /// The buyer's bag window is open: each unit goes into the worn bag first, then to the character (<c>rightClickAutoEquipping</c> trades into the bag window when it is open, into
+    /// the character window on no room, <b>Verified</b>). A bag bought skips it, as Meitou keeps containers out of bags.
+    /// </summary>
+    public bool BagFirst { get; init; }
 }
 
-/// <summary>Sells <see cref="Quantity"/> units of the customer's item <see cref="Item"/> (its index in the customer's inventory) to the shop, at the stock cell dropped on when free.</summary>
-public sealed record SellItem(InventoryItemToken Item, int Quantity) : SimCommand
-{
-    public int? X { get; init; }
-    public int Y { get; init; }
-}
+/// <summary>The right click on a customer's item: sells up to <see cref="Quantity"/> units of <see cref="Item"/> (its index in the customer's inventory) a unit at a time into the window, a copy into the stock.</summary>
+public sealed record SellItem(InventoryItemToken Item, int Quantity) : SimCommand;
 
 /// <summary>One item of a trade window, with what it costs (stock) or fetches (the customer's goods) as a whole stack.</summary>
 public sealed record TradeItemView(int Index, string Record, string Name, string Section, int X, int Y, int Width, int Height, int Quantity, float Quality, long Price, long UnitPrice, bool Stolen)
 {
-    /// <summary>The current transfer reverses a purchase or sale from this trade window at its original price.</summary>
+    /// <summary>Units of it were traded in this trade window (<see cref="BuybackUnits"/> of them): those trade back at the opposite direction's value.</summary>
     public bool Buyback { get; init; }
+    public int BuybackUnits { get; init; }
     /// <summary>A bag (a container with a contents grid): it trades whole, and may go into the backpack slot.</summary>
     public bool Container { get; init; }
     /// <summary>The item's material record ("" none), which picks its icon.</summary>
@@ -71,7 +70,7 @@ public sealed record TradeItemView(int Index, string Record, string Name, string
     public InventoryItemToken Token => new(Index, Record, Section, X, Y, Quantity, Quality);
 }
 
-/// <summary>Arranges the open trade's stock (the trader window's ARRANGE button): the stock's grid as <see cref="InventoryCommands.Arrange"/>.</summary>
+/// <summary>Arranges the open trade's window (the trader window's ARRANGE button): the window's copy of the stock as <see cref="TradeSystem"/> arranges it; the stock itself stays as it is.</summary>
 public sealed record ArrangeStock : SimCommand;
 
 /// <summary>The open trade as the UI shows it (published with the snapshot).</summary>
@@ -80,8 +79,6 @@ public sealed record TradeView(CharacterId Customer, CharacterId Trader, string 
 {
     /// <summary>The held item (<see cref="PlayerState.Held"/>) priced as stock (lifted from the stock) or as the customer's goods (lifted from the customer); null for none or another's.</summary>
     public TradeItemView? Held { get; init; }
-    /// <summary>The stock cells outside every container of a building shop (<see cref="Shop.Unused"/>), which hold nothing; empty for a squad shop.</summary>
-    public IReadOnlyList<GridRegion> Unused { get; init; } = [];
 }
 
 /// <summary>A system that has an open trade to publish (the trade system).</summary>
@@ -112,10 +109,11 @@ public sealed class TradeSettings
 /// <item><b>Fencing</b> (8.4, <b>Observed</b>): a stolen item sold to a shop that is not a knowing fence (<c>buys stolen</c>; a knowing fence only for goods stolen from its own squad) is caught unless a roll is below
 /// lerp(thievery / 100, 0.4, 1.25), halved when the item was stolen from the shop's own faction and again from its own squad (never caught when it was stolen from a bandit or adventurer faction, or from one the shop's faction is
 /// not allied to whose home town is not the trader's, <see cref="FenceOdds"/>); the seller trains thievery either way; caught: "Got caught selling stolen item." (9), the sale is refused and the seller gets a
-/// pending Fencing crime against the shop's faction, booked at once with the shopkeeper as the witness. The prompt that shows the chance is the UI's. An illegal item (the culture of the town's faction) is refused by a trader that does not buy illegal goods:
-/// "Attempted smuggling!" (<see cref="Smuggling"/>); the rest of the smuggling rules (the trader's answer for a smuggler, read by no caller seen) are not built.</item>
+/// pending Fencing crime against the shop's faction, booked at once with the shopkeeper as the witness, and the trade closes (<c>closeAllInventories</c>, a drop and a right click alike,
+/// <b>Verified</b>). The prompt that shows the chance is the UI's. An illegal item (the culture of the town's faction) is refused by a trader that does not buy illegal goods:
+/// "Attempted smuggling!" (<see cref="Smuggling"/>), which closes the trade too; the rest of the smuggling rules (the trader's answer for a smuggler, read by no caller seen) are not built.</item>
 /// </list>
-/// The shops' stock and restock times are in the state hash (through the squads). The open trade is not, but the buyback receipts it leaves on items are, and they are not saved:
+/// The shops' stock and restock times are in the state hash (through the squads). The open trade is not, but the buyback counts it leaves on items are, and they are not saved:
 /// a save made mid-trade reloads with a different hash (docs/simulation.md, trading).
 /// </summary>
 public sealed class TradeSystem : ITickSystem, ITradeSource
@@ -129,6 +127,12 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
     TradeSession session = new();
     long approachUntil;
     TradeView? view;
+    // The open trade's window of its shop's stock (DisplayOf), the shop it shows and that shop's fill count when it was made.
+    Inventory? display;
+    Shop? displayOf;
+    int displayFills;
+    // The window's sources besides the stock: the shop building's other containers (Sources).
+    List<Inventory> others = [];
 
     public TradeSystem(PopulationData data, TradeSettings? settings = null)
     {
@@ -175,7 +179,11 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
                     Sell(world, sell);
                     break;
                 case ArrangeStock when open:
-                    if (Resolve(world, out _, out _, out var arranged)) InventoryCommands.Arrange(arranged!.Stock);
+                    if (Resolve(world, out _, out _, out var arranged))
+                    {
+                        DisplayOf(world, arranged!);
+                        Arrange();
+                    }
                     break;
             }
         }
@@ -249,6 +257,13 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
         customer = trader = CharacterId.None;
         open = traderWandered = false;
         view = null;
+        // A copy held off the window was taken off the stock when lifted: it goes back into the stock.
+        if (world.Player.Held is { From.Holder: ItemHolder.Stock } lifted && displayOf is { } shop)
+        {
+            Stocked(shop, lifted.Item, lifted.Item.Quantity);
+            world.Player.Held = null;
+        }
+        (display, displayOf) = (null, null);
     }
 
     // ------------------------------------------------------------------ shops
@@ -275,6 +290,7 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
             }
             if (squad.Shop is { } shop)
             {
+                Hold(shop, squad);
                 if (world.Tick < shop.NextRestockTick || TemplateOf(squad.TemplateId) is not { } again) continue;
                 Refill(world, squad, shop, again);
             }
@@ -284,6 +300,7 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
                 // A housed trader keeps a building shop when its home has stock containers, whether or not it made prisoner or slave squads (FUN_140583a10 / FUN_1404ff5e0, Observed); without containers the squad shop stays (Meitou fallback, the original stocks nothing).
                 squad.Shop = (squad.HomeBuilding is { } home ? Shop.ForBuilding(home, terms) : null)
                     ?? new Shop { Terms = terms };
+                Hold(squad.Shop, squad);
                 TakeContents(world, squad.Shop);
                 Refill(world, squad, squad.Shop, template);
             }
@@ -310,6 +327,13 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
             grid.Items.Clear();
         }
     }
+
+    /// <summary>
+    /// A shop's stock is held by the shop's faction (an item of it stolen from that faction is not stolen there, <see cref="InventoryCommands.Stolen"/>): a building's containers, of no
+    /// squad; a squad shop's members' bags (<c>ShopTrader</c>), of its squad.
+    /// </summary>
+    void Hold(Shop shop, Squad squad) =>
+        shop.Stock.Holder ??= () => new(shop.Terms.Faction, shop.Building is null ? squad.Id : -1, data.IsLawless(shop.Terms.Faction));
 
     /// <summary>Whether someone of the squad is alive.</summary>
     static bool Living(World world, Squad squad)
@@ -388,7 +412,7 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
 
     // ------------------------------------------------------------------ trading
 
-    bool Resolve(World world, out int c, out int t, out Shop? shop)
+    bool Resolve(World world, out int c, out int t, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Shop? shop)
     {
         var table = world.Characters;
         shop = null;
@@ -417,40 +441,224 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
             && item.Quality == token.Quality && (item.Contents is null || item.Quantity == 1) ? item : null;
     }
 
+    // ------------------------------------------------------------------ the trade window's stock
+
+    /// <summary>
+    /// The shop's stock as the trade window shows it (<c>FUN_140953850</c>, <c>FUN_1409528d0</c>, <b>Verified</b>): copies of its items but money in one grid as wide as the stock (the widest
+    /// container, at least 18) and as tall as all its containers' cells take (18 x 18 for a squad shop), each added as the window adds one (<see cref="Shown"/>), then arranged
+    /// (<see cref="Arrange"/>). Made when the trade opens, and made again in the same grid on a restock of the shop (<see cref="Shop.Fills"/>) when the trader shown is its squad's leader and
+    /// the restock made stock (<c>FUN_14095ab10</c>, <c>FUN_14095b9d0</c>, <b>Verified</b>); other changes to the stock (a shopper, a container looted) do not show until then. An item held
+    /// off the window stays on the mouse.
+    /// </summary>
+    Inventory DisplayOf(World world, Shop shop)
+    {
+        bool same = display is not null && ReferenceEquals(displayOf, shop);
+        if (same && displayFills != shop.Fills && !ShowsRestock(world, shop)) displayFills = shop.Fills;
+        if (!same || displayFills != shop.Fills)
+        {
+            (others, int width, int total) = Sources(world, shop);
+            if (total == 0) total = width * width;
+            int height = (total + width - 1) / width;
+            // The window only ever grows during a trade (FUN_140954ba0): a remade one keeps its height.
+            if (same) { display!.Items.Clear(); display.Height = Math.Max(height, display.Height); }
+            // Held by the trader's ShopTrader: its faction, no squad (its handle's container is 0).
+            else display = new Inventory(width, height) { StackBonusMult = Shop.StockStackMult, Holder = () => new(shop.Terms.Faction, -1, data.IsLawless(shop.Terms.Faction)) };
+            foreach (var item in shop.Stock.Items.Concat(others.SelectMany(o => o.Items)))
+                if (item.ItemFunction != PlayerSystem.MoneyFunction) Shown(Copy(item), item.Quantity, copy: true);
+            Arrange();
+            (displayOf, displayFills) = (shop, shop.Fills);
+        }
+        return display!;
+    }
+
+    /// <summary>
+    /// The window's sources besides the stock, and its size (<c>FUN_140953850</c>, <b>Observed</b>): a building shop shows every building in its interior that has an inventory, whatever
+    /// its function, as wide as the widest (at least 18) and as many cells as they all have. Engine choice: of those outside the stock, the lockable containers' contents are shown;
+    /// one with no lock (a bench) keeps no inventory here, so it adds its cells and nothing else. A squad shop has only its stock.
+    /// </summary>
+    (List<Inventory> Others, int Width, int Cells) Sources(World world, Shop shop)
+    {
+        int cells = shop.Stock.Regions?.Sum(r => r.Width * r.Height) ?? 0;
+        if (shop.Building is null || !world.Characters.TryResolveNext(trader, out int t) || world.Squads.Find(world.Characters.Cold(t)!.SquadId)?.HomeBuilding is not { } home
+            || home.Key != shop.Building || home.Fixtures.Where(f => f.StorageWidth > 0 && f.StorageHeight > 0).ToList() is not { Count: > 0 } boxes)
+            return ([], shop.Stock.Width, cells);
+        var rest = boxes.Where(f => !shop.Containers.Contains(f.Id)).Select(f => world.Fixtures.Find(f.Id)?.Contents).OfType<Inventory>().ToList();
+        return (rest, Math.Max(Shop.Width, boxes.Max(f => f.StorageWidth)), boxes.Sum(f => f.StorageWidth * f.StorageHeight));
+    }
+
+    /// <summary>The inventories a trade at <paramref name="shop"/> takes from and puts into: the stock first, then the window's other sources.</summary>
+    IEnumerable<Inventory> SourcesOf(Shop shop) => ReferenceEquals(shop, displayOf) ? [shop.Stock, .. others] : [shop.Stock];
+
+    /// <summary>
+    /// Whether a restock remakes the open window: its trader is the shop squad's effective leader (<c>getSquadLeader</c>, <see cref="PopulationSystem.EffectiveLeader"/>), and the
+    /// restock rolled stock (<see cref="Shop.Rolled"/>; a building shop's always remakes it).
+    /// </summary>
+    bool ShowsRestock(World world, Shop shop) =>
+        world.Characters.TryResolveNext(trader, out int t) && world.Squads.Find(world.Characters.Cold(t)!.SquadId) is { } squad
+        && (world.SystemOf<PopulationSystem>()?.EffectiveLeader(world, squad) ?? squad.Leader) == trader
+        && (shop.Building is not null || shop.Rolled);
+
+    /// <summary>
+    /// A stock item as the window shows it (<c>FUN_1409528d0</c>, <b>Verified</b>): a new item (its own lock; a bag empty, <see cref="ItemInstance.Clone"/>), fully charged and with no
+    /// owner, so not stolen (<c>FUN_140952730</c>, <c>FUN_14075d6b0</c>); a new item is in no trade's buyback table.
+    /// </summary>
+    ItemInstance Copy(ItemInstance item)
+    {
+        var copy = New(item);
+        if (copy.MaxCharges > 0) copy.Charges = copy.MaxCharges;
+        copy.Mark = StolenMark.None;
+        return copy;
+    }
+
+    /// <summary>
+    /// Adds an item to the window where it first fits (<c>FUN_140954ba0</c>): one that does not fit makes the window two of its heights taller (the same grid) and tries again. Returns the units placed.
+    /// The retry passes the caller's count again, and the add places that count + what the item has left - 1 (<c>FUN_14074c8b0</c>, <b>Verified</b> by running both): exact for the
+    /// adds of an item's own units, but a window copy (<paramref name="copy"/>: it holds 1 and is passed its source's count) places its count more, 2Q - 1 units in all, as the original.
+    /// With <paramref name="stock"/> the window's callbacks follow each add (<c>_sectionAddItemCallback</c>, <c>_sectionUpdateItemCallback</c>, <b>Verified</b>): a stack of the window
+    /// that grew puts a copy of itself, as many units as it grew by, into the stock, and an item new in it a copy of itself.
+    /// </summary>
+    int Shown(ItemInstance item, int units, int? x = null, int y = 0, bool copy = false, bool stock = false)
+    {
+        var before = stock ? display!.Items.ToDictionary(i => i, i => i.Quantity) : null;
+        int placed = x is { } at ? PlaceAt(display!, item, units, at, y) : Place(display!, item, units);
+        if (placed < units)
+        {
+            display!.Height += 2 * item.Height;
+            if (copy) item.Quantity += units - 1;
+            placed += Place(display, item, item.Quantity);
+        }
+        if (before is not null && displayOf is { } shop)
+            foreach (var shown in display!.Items.ToList())
+                if (!before.TryGetValue(shown, out int had)) Stocked(shop, shown, shown.Quantity);
+                else if (shown.Quantity > had) Stocked(shop, shown, shown.Quantity - had);
+        return placed;
+    }
+
+    /// <summary>
+    /// A held copy lifted off the window put back (<c>returnItem</c>, <c>FUN_14070d860</c>): at its old cell when that is free, else where the window adds it (<see cref="Shown"/>), the
+    /// stock following.
+    /// </summary>
+    internal void ShowAgain(Inventory window, ItemInstance item, int x, int y)
+    {
+        if (ReferenceEquals(window, display)) Shown(item, item.Quantity, x, y, stock: true);
+    }
+
+    /// <summary>
+    /// Units of the window's item taken onto the mouse (or swapped onto it) leave the stock at once, and units added to the window from the mouse put a copy into it: the window's
+    /// remove and add callbacks (<c>ShopTraderInventory::_sectionRemoveItemCallback</c>, <c>_sectionAddItemCallback</c>, called by the lift <c>FUN_1407139a0</c>, <b>Verified</b>).
+    /// </summary>
+    internal void FromStock(ItemInstance item, int units)
+    {
+        if (displayOf is { } shop) Unstocked(shop, item, units);
+    }
+
+    internal void ToStock(ItemInstance item, int units)
+    {
+        if (displayOf is { } shop) Stocked(shop, item, units);
+    }
+
+    /// <summary>
+    /// The window's arranging (<c>FUN_140749d30</c>, <b>Verified</b>): its items from their position order (by x, then y), longer side first (<c>FUN_1407468a0</c>), each added again as
+    /// <see cref="Shown"/> adds one; as that grows the window for any item, the other keys are never tried. The sort is the original's (<see cref="ArrangeSort"/>), which is not stable.
+    /// </summary>
+    void Arrange() => InventoryCommands.Arrange(display!, "main", item =>
+    {
+        // A stack that joins another whole has 0 left after the add: its units count, not what it holds after.
+        int units = item.Quantity;
+        return Shown(item, units) == units;
+    });
+
+    /// <summary>
+    /// A sale into the window: a copy of the units goes into the stock (the original's into the first container that takes it, <c>FUN_1409529e0</c>); units that fit nowhere are lost to
+    /// the stock, though the window shows them until it is made again, as in the original. Engine choice: the copy goes in as <see cref="Place"/> puts it, onto a stack in any container first.
+    /// </summary>
+    void Stocked(Shop shop, ItemInstance sold, int units)
+    {
+        var copy = New(sold);
+        copy.Quantity = units;
+        Owned(copy, shop);
+        // Into the first source that takes it (FUN_1409529e0); engine choice: the stock first.
+        int left = units;
+        foreach (var source in SourcesOf(shop))
+            if (left > 0) left -= Place(source, copy, left);
+    }
+
+    /// <summary>A new item like <paramref name="item"/> (<see cref="ItemInstance.Clone"/>) in its record's colour, as a new item takes it.</summary>
+    ItemInstance New(ItemInstance item)
+    {
+        var copy = item.Clone();
+        copy.ColourId = Meitou.Data.Gameplay.ItemColours.Of(data.Db, data.Db.Find(item.Record))?.StringId ?? "";
+        return copy;
+    }
+
+    /// <summary>
+    /// A buy from the window: the units come off the stock's items the same as the one shown, in the stock's order (<c>FUN_140952a70</c>, <b>Verified</b>: of the same record, maker and
+    /// material, <c>FUN_14075d510</c>; a bag goes whole, its contents with it), the stock before the window's other sources (engine choice). A stack that keeps some units is full again
+    /// (the removal <c>removeItemDontDestroy_returnsItem</c>, <c>FUN_14074a950</c>, <b>Verified</b>).
+    /// </summary>
+    void Unstocked(Shop shop, ItemInstance shown, int units)
+    {
+        foreach (var source in SourcesOf(shop))
+            if (units > 0) units = Unstocked(source, shown, units);
+    }
+
+    int Unstocked(Inventory source, ItemInstance shown, int units)
+    {
+        var from = source.Items.Where(i => SameAs(i, shown)).ToList();
+        foreach (var item in from)
+        {
+            if (units <= 0) break;
+            int n = Math.Min(units, item.Quantity);
+            if (n < item.Quantity) Refilled(item);
+            Take(source, item, n);
+            units -= n;
+        }
+        return units;
+    }
+
+    static bool SameAs(ItemInstance a, ItemInstance b) => a.Record == b.Record && a.CompanyId == b.CompanyId && a.MaterialId == b.MaterialId;
+
     // ------------------------------------------------------------------ the held item (PlayerSystem, Items/HeldItems.cs)
 
-    /// <summary>The open trade's stock and its customer while the trade's windows show; null when no trade is open.</summary>
+    /// <summary>The open trade's window (<see cref="DisplayOf"/>, the copy of its stock) and its customer while the trade's windows show; null when no trade is open.</summary>
     internal Inventory? OpenStock(World world, out CharacterId buyer)
     {
         buyer = CharacterId.None;
         if (!open || !Resolve(world, out _, out _, out var shop)) return null;
         buyer = customer;
-        return shop!.Stock;
+        return DisplayOf(world, shop!);
     }
 
     /// <summary>
-    /// How many of <paramref name="units"/> of a held item the payer can afford (the drop caps the quantity so, <c>FUN_140715560</c>); none: "You can't afford that." or "The shopkeeper can't
-    /// afford that.".
+    /// How many units of a held item a drop takes at most for what the payer has (<c>getMaxAffordableNum</c>, <c>FUN_14075d5c0</c>, under <c>FUN_140715560</c>, <b>Verified</b>): the payer's
+    /// money over one unit's plain value in the drop's direction (no buyback, no partly used unit), all of them when a unit is worth less than 1. The price of what is placed is checked
+    /// after (<see cref="PayHeld"/>).
     /// </summary>
-    internal int AffordHeld(World world, ItemInstance item, int units, bool sell)
+    internal int HeldCap(World world, ItemInstance item, bool sell)
     {
         if (!Resolve(world, out int c, out int t, out var shop)) return 0;
         var squad = world.Squads.Find(world.Characters.Cold(t)!.SquadId)!;
-        int n = Affordable(Market(world), item, Math.Clamp(units, 0, item.Quantity), sell, shop!.Terms, sell ? world.Characters.Cold(c)!.Faction : squad.Faction,
-            sell ? squad.Money : world.Player.Money);
-        if (n == 0) world.Post(sell ? "The shopkeeper can't afford that." : "You can't afford that.");
-        return n;
+        long value = Market(world).UnitPrice(item, sell, shop!.Terms, sell ? world.Characters.Cold(c)!.Faction : squad.Faction);
+        return value < 1 ? item.Quantity : (int)Math.Min(item.Quantity, (sell ? squad.Money : world.Player.Money) / value);
     }
 
-    /// <summary>A held stolen item put on the stock of a shop that is no fence: the fence roll (8.4); caught, "Got caught selling stolen item." and the pending Fencing crime (true).</summary>
-    internal bool CaughtSelling(World world, ItemInstance item)
+    /// <summary>
+    /// The checks of a sale to the shop before its price (<c>FUN_140715560</c>, <c>RClickAutoTrade</c>, <b>Verified</b>): a stolen item put on a shop that is no fence gets the fence roll (8.4;
+    /// caught, "Got caught selling stolen item." and the pending Fencing crime), then the smuggling check; either refusal closes the trade (<c>closeAllInventories</c>). True when refused.
+    /// <paramref name="unit"/> keys the roll of each unit of a right-click run.
+    /// </summary>
+    internal bool CaughtSelling(World world, ItemInstance item, int unit = 0)
     {
         if (!Resolve(world, out int c, out int t, out var shop)) return false;
         var squad = world.Squads.Find(world.Characters.Cold(t)!.SquadId)!;
-        if (!item.IsStolenFor(world.Characters.Cold(c)!.Faction, data) || !Fences(item, squad, shop!.Terms) || !Caught(world, c, t, item, squad, shop.Terms)) return Smuggling(world, c, item, shop!.Terms);
-        world.Post("Got caught selling stolen item.");
-        if (Crimes is { } crimes && crimes.SetPending(world, c, Crime.CrimeCode.Fencing, squad.Faction, trader, Crime.CrimeSystem.MinTimer, viaWrapper: true))
-            crimes.Book(world, c, squad.Faction, trader);
+        if (item.IsStolenFor(world.Characters.Cold(c)!.Faction, data) && Fences(item, squad, shop!.Terms) && Caught(world, c, t, item, squad, shop.Terms, unit))
+        {
+            world.Post("Got caught selling stolen item.");
+            if (Crimes is { } crimes && crimes.SetPending(world, c, Crime.CrimeCode.Fencing, squad.Faction, trader, Crime.CrimeSystem.MinTimer, viaWrapper: true))
+                crimes.Book(world, c, squad.Faction, trader);
+        }
+        else if (!Smuggling(world, c, item, shop!.Terms)) return false;
+        Close(world);
         return true;
     }
 
@@ -467,121 +675,163 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
     }
 
     /// <summary>
-    /// Pays for the first <paramref name="units"/> of a held item that changed hands (priced before it moves, a buyback at its receipt's coins): the price goes from the buyer's purse to
-    /// the seller's. Returns the moved units' receipt (null when this undid an earlier trade of this window).
+    /// Pays for the first <paramref name="units"/> of a held item that changed hands (priced before it moves, <see cref="Price"/>): the price goes from the buyer's purse to the seller's.
+    /// A payer short of the price: "You can't afford that." or "The shopkeeper can't afford that." (<c>FUN_140715560</c>), false. The caller marks the moved units traded (<see cref="Traded"/>)
+    /// and keeps the stock in step (<see cref="FromStock"/>, <see cref="ToStock"/>).
     /// </summary>
-    internal TradeReceipt? PayHeld(World world, ItemInstance item, int units, bool sell)
+    internal bool PayHeld(World world, ItemInstance item, int units, bool sell)
     {
-        if (units <= 0 || !Resolve(world, out int c, out int t, out var shop)) return null;
+        if (units <= 0 || !Resolve(world, out int c, out int t, out var shop)) return false;
         var cold = world.Characters.Cold(c)!;
         var squad = world.Squads.Find(world.Characters.Cold(t)!.SquadId)!;
         var m = Market(world);
         int holder = sell ? cold.Faction : squad.Faction;
-        var receipt = Receipt(m, item, units, sell, shop!.Terms, holder);
-        long price = Price(m, item, units, sell, shop.Terms, holder);
+        long price = Price(m, item, units, sell, shop!.Terms, holder);
+        if ((sell ? squad.Money : world.Player.Money) < price)
+        {
+            world.Post(sell ? "The shopkeeper can't afford that." : "You can't afford that.");
+            return false;
+        }
         if (sell) { squad.Money -= price; world.Player.Money += price; }
         else { world.Player.Money -= price; squad.Money += price; }
         world.Post($"{cold.Name} {(sell ? "sold" : "bought")} {Units(units, item.Name)} for c.{price}");
-        return receipt;
+        return true;
     }
 
+    /// <summary>Units that changed hands in this trade go into its buyback table (<see cref="ItemInstance.ToggleTraded"/>).</summary>
+    internal void Traded(ItemInstance moved) => moved.ToggleTraded(session);
+
+    /// <summary>
+    /// A buy command: one unit, and a stack one unit at a time until one fails, each priced and placed on its own (<c>RClickAutoTrade</c>, <c>RClickAutoTradeAll</c>, <b>Verified</b>);
+    /// only the first failure is told.
+    /// </summary>
     void Buy(World world, BuyItem buy)
     {
         if (!Resolve(world, out int c, out int t, out var shop)) return;
         var cold = world.Characters.Cold(c)!;
         var squad = world.Squads.Find(world.Characters.Cold(t)!.SquadId)!;
-        if (Find(shop!.Stock, buy.Item) is not { } item) return;
-        if (item.Contents is { Items.Count: > 0 }) { world.Post(BagNotEmpty); return; }
-        var m = Market(world);
-        int units = Affordable(m, item, Math.Clamp(buy.Quantity, 1, item.Quantity), false, shop.Terms, squad.Faction, world.Player.Money);
-        if (units == 0)
+        if (Find(DisplayOf(world, shop!), buy.Item) is not { } item) return;
+        int want = Math.Clamp(buy.Quantity, 1, item.Quantity), moved = 0, bagged = 0;
+        long paid = 0;
+        for (int k = 0; k < want && display!.Items.Contains(item); k++)
         {
-            world.Post("You can't afford that.");
-            return;
+            var (price, refusal, inBag) = BuyUnit(buy, cold, squad, shop!, item, world);
+            // With the bag window open a Shift run goes on into the character window and tells why that pass's first unit failed, so nothing when the bag and the character
+            // window both took units (rightClickAutoEquipping, Verified).
+            if (refusal is not null) { if (moved == 0 || buy.BagFirst && want > 1 && (bagged == 0 || bagged == moved)) world.Post(refusal); break; }
+            (moved, paid) = (moved + 1, paid + price);
+            if (inBag) bagged++;
         }
-        var receipt = Receipt(m, item, units, false, shop.Terms, squad.Faction);
-        var bought = item.WithQuantity(units);
-        bought.Buyback = receipt;
-        long price = Price(m, item, units, false, shop.Terms, squad.Faction);
-        int placed;
-        if (item.Contents is not null)
-        {
-            // An empty bag moves itself (a copy would have no contents inventory); its receipt is replaced (none: this undid a sale).
-            placed = TransferContainer(shop.Stock, buy.Item, cold.Inventory!, buy.Section, buy.X, buy.Y, buy.Equip, cold);
-            if (placed > 0) item.Buyback = receipt;
-            if (placed > 0 && InventoryCommands.IsEquipmentSection(item.Section)) assembly.RefreshEquipment(cold);
-        }
-        else if (buy.Section == "backpack_attach") placed = 0;
-        else if (buy.Section is { } section) placed = PlaceAt(cold.Inventory!, bought, units, section, buy.X, buy.Y);
-        else if (buy.Equip && InventoryCommands.TryEquip(cold.Inventory!, bought.WithQuantity(1), cold))
-        {
-            // One unit is worn; the rest of a stack goes where it fits.
-            assembly.RefreshEquipment(cold);
-            placed = 1;
-            if (units > 1)
-            {
-                var rest = bought.WithQuantity(units - 1);
-                rest.Buyback = bought.Buyback?.Skip(1);
-                placed += Place(cold.Inventory!, rest, units - 1);
-            }
-        }
-        else placed = Place(cold.Inventory!, bought, units);
-        if (placed == 0)
-        {
-            world.Post("No room for that item.");
-            return;
-        }
-        if (placed < units) price = Price(m, item, placed, false, shop.Terms, squad.Faction);
-        if (item.Contents is null) Take(shop.Stock, item, placed);
-        world.Player.Money -= price;
-        squad.Money += price;
-        world.Post($"{cold.Name} bought {Units(placed, item.Name)} for c.{price}");
+        if (moved > 0) world.Post($"{cold.Name} bought {Units(moved, item.Name)} for c.{paid}");
     }
 
+    (long Price, string? Refusal, bool InBag) BuyUnit(BuyItem buy, CharacterCold cold, Squad squad, Shop shop, ItemInstance item, World world)
+    {
+        var shown = display!;
+        bool bag = item.Contents is not null;
+        var (bought, whole) = Split(item, 1);
+        long price = Price(Market(world), bought, 1, false, shop.Terms, squad.Faction, mixed: false);
+        var moving = bag ? item : bought;
+        string? refusal = world.Player.Money < price ? "You can't afford that." : null;
+        bool inBag = false;
+        if (refusal is null)
+        {
+            moving.ToggleTraded(session);
+            bool placed;
+            if (bag) placed = TransferContainer(shown, buy.Item, cold.Inventory!, buy.Equip, cold);
+            else if (buy.BagFirst && cold.Inventory!.Backpack?.Contents is { } worn && worn.AddTo("backpack_content", bought, cold.Inventory.Holder)) placed = inBag = true;
+            else
+            {
+                // The sections of the item's slot type first (one the buyer's race may not wear: "Can't wear that item.", each), then the main grid, not the bag (RClickAutoTrade).
+                if (buy.Equip && !bought.WearableBy(cold.Race?.StringId, SquadRegistry.IsAnimal(cold)))
+                    foreach (var _ in InventoryCommands.SlotSections(bought)) world.Post("Can't wear that item.");
+                placed = buy.Equip && InventoryCommands.TryEquip(cold.Inventory!, bought, cold) || cold.Inventory!.AddTo("main", bought);
+            }
+            if (!placed)
+            {
+                moving.ToggleTraded(session);
+                refusal = "No room for that item.";
+            }
+        }
+        if (refusal is not null)
+        {
+            // A whole item left the window and the stock at once, and back on its cell it puts a copy into the stock (_sectionAddItemCallback); a split-off unit is gone, its traded
+            // count with it.
+            if (whole) { Unstocked(shop, item, item.Quantity); Stocked(shop, item, item.Quantity); }
+            else item.Quantity++;
+            return (0, refusal, false);
+        }
+        if (whole && !bag) Take(shown, item, 1);
+        if (!whole) Refilled(item);
+        Unstocked(shop, item, 1);
+        if (InventoryCommands.IsEquipmentSection((bag ? item : bought).Section)) assembly.RefreshEquipment(cold);
+        world.Player.Money -= price;
+        squad.Money += price;
+        return (price, null, inBag);
+    }
+
+    /// <summary>
+    /// A sell command: one unit, and a stack one unit at a time, each with its own fence and smuggling checks, as <see cref="Buy"/>. The checks come before the price, so a shop that
+    /// can't pay still rolls (<c>RClickAutoTrade</c>, <b>Verified</b>).
+    /// </summary>
     void Sell(World world, SellItem sell)
     {
         if (!Resolve(world, out int c, out int t, out var shop)) return;
         var cold = world.Characters.Cold(c)!;
-        var tc = world.Characters.Cold(t)!;
-        var squad = world.Squads.Find(tc.SquadId)!;
+        var squad = world.Squads.Find(world.Characters.Cold(t)!.SquadId)!;
         if (Find(cold.Inventory!, sell.Item) is not { } item || !InventoryCommands.IsMovableSection(item.Section)) return;
         if (item.LockedOn) { world.Post("This item is locked in place and cannot be removed."); return; }
-        if (item.Contents is { Items.Count: > 0 }) { world.Post(BagNotEmpty); return; }
-        var m = Market(world);
-        int units = Affordable(m, item, Math.Clamp(sell.Quantity, 1, item.Quantity), true, shop!.Terms, cold.Faction, squad.Money);
-        if (units == 0)
+        int want = Math.Clamp(sell.Quantity, 1, item.Quantity), moved = 0;
+        long paid = 0;
+        for (int k = 0; k < want && item.Quantity > 0 && cold.Inventory!.All().Contains(item); k++)
         {
-            world.Post("The shopkeeper can't afford that.");
-            return;
+            var (sold, price, refusal) = SellUnit(cold, squad, shop!, item, sell.Item, k, world);
+            if (!sold) { if (moved == 0 && refusal is not null) world.Post(refusal); break; }
+            (moved, paid) = (moved + 1, paid + price);
+            if (item.Contents is not null) break;   // a bag goes whole
         }
-        if (item.IsStolenFor(cold.Faction, data) && Fences(item, squad, shop.Terms) && Caught(world, c, t, item, squad, shop.Terms))
+        if (moved > 0) world.Post($"{cold.Name} sold {Units(moved, item.Name)} for c.{paid}");
+    }
+
+    /// <summary>One unit of a sale; not sold: the refusal to tell (null: told already).</summary>
+    (bool Sold, long Price, string? Refusal) SellUnit(CharacterCold cold, Squad squad, Shop shop, ItemInstance item, InventoryItemToken token, int unit, World world)
+    {
+        if (CaughtSelling(world, item, unit)) return (false, 0, null);
+        bool bag = item.Contents is not null, equipped = InventoryCommands.IsEquipmentSection(item.Section);
+        var (sold, whole) = Split(item, 1);
+        long price = Price(Market(world), sold, 1, true, shop.Terms, cold.Faction, mixed: false);
+        var moving = bag ? item : sold;
+        string? refusal = squad.Money < price ? "The shopkeeper can't afford that." : null;
+        if (refusal is null)
         {
-            world.Post("Got caught selling stolen item.");
-            if (Crimes is { } crimes && crimes.SetPending(world, c, Crime.CrimeCode.Fencing, squad.Faction, trader, Crime.CrimeSystem.MinTimer, viaWrapper: true))
-                crimes.Book(world, c, squad.Faction, trader);
-            return;
+            moving.ToggleTraded(session);
+            if (!bag) Owned(sold, shop);
+            // Into the window, as it adds an item, growing it (FUN_140954ba0 under the auto-trade add, Observed; a bag moves itself), each add putting a copy into the stock.
+            DisplayOf(world, shop);
+            bool placed = !bag ? Shown(sold, 1, stock: true) == 1 : TransferContainer(cold.Inventory!, token, display!, false, null);
+            if (!placed && bag)
+            {
+                display!.Height += 2 * item.Height;
+                placed = TransferContainer(cold.Inventory!, token, display, false, null);
+            }
+            if (!placed)
+            {
+                moving.ToggleTraded(session);
+                refusal = "No room for that item.";
+            }
         }
-        if (Smuggling(world, c, item, shop.Terms)) return;
-        var receipt = Receipt(m, item, units, true, shop.Terms, cold.Faction);
-        var sold = item.WithQuantity(units);
-        sold.Buyback = receipt;
-        long price = Price(m, item, units, true, shop.Terms, cold.Faction);
-        bool equipped = InventoryCommands.IsEquipmentSection(item.Section);
-        int placed = item.Contents is not null
-            ? TransferContainer(cold.Inventory!, sell.Item, shop.Stock, sell.X is not null ? "main" : null, sell.X ?? 0, sell.Y, false, null)
-            : sell.X is { } sx ? PlaceAt(shop.Stock, sold, units, "main", sx, sell.Y) : Place(shop.Stock, sold, units);
-        if (placed == 0)
+        if (refusal is not null)
         {
-            world.Post("No room for that item.");
-            return;
+            if (!whole) item.Quantity++;   // the split-off unit is gone, its traded count with it
+            return (false, 0, refusal);
         }
-        if (item.Contents is not null) item.Buyback = receipt;
-        if (placed < units) price = Price(m, item, placed, true, shop.Terms, cold.Faction);
-        if (item.Contents is null) Take(cold.Inventory!, item, placed);
+        if (bag) { Owned(item, shop); Stocked(shop, item, 1); }
+        else if (whole) Take(cold.Inventory!, item, 1);
+        else Refilled(item);
         if (equipped) assembly.RefreshEquipment(cold);
         squad.Money -= price;
         world.Player.Money += price;
-        world.Post($"{cold.Name} sold {Units(placed, item.Name)} for c.{price}");
+        return (true, price, null);
     }
 
     /// <summary>
@@ -634,72 +884,53 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
         return FenceChance(thievery, from == shopFaction, item.OwnerSquad >= 0 && item.OwnerSquad == shopSquad.Id);
     }
 
-    bool Caught(World world, int seller, int trader, ItemInstance item, Squad shopSquad, Trader terms)
+    /// <summary>The fence roll of one sale; <paramref name="unit"/> keys the roll of each unit of a stack sold a unit at a time within one tick.</summary>
+    bool Caught(World world, int seller, int trader, ItemInstance item, Squad shopSquad, Trader terms, int unit = 0)
     {
         var cold = world.Characters.Cold(seller)!;
         float p = FenceOdds(world, cold.Stats?[StatsEnumerated.Thieving] ?? 0, item, seller, trader, shopSquad, terms);
-        bool caught = p < 1 && Rng.Float(Rng.Hash(world.Seed, Rng.Key(world.Characters.IdOf(seller)), RngPurpose.Trade, (ulong)world.Tick)) >= p;
+        bool caught = p < 1 && Rng.Float(Rng.Hash(world.Seed, Rng.Key(world.Characters.IdOf(seller)), RngPurpose.Trade, (ulong)world.Tick ^ ((ulong)unit << 40))) >= p;
         // The seller trains thievery whenever the odds are below 0.98 (<c>FUN_140793770</c>): 5 x 2 for a fence that works, 20 x 2 for one that is caught.
         if (p < Crime.CrimeSystem.FenceXpBelow) Crimes?.TrainThievery(world, seller, caught ? Crime.CrimeSystem.FenceCaughtXp : Crime.CrimeSystem.FenceXp);
         return caught;
     }
 
-    /// <summary>How many of <paramref name="wanted"/> units the payer's <paramref name="money"/> covers (the trade window splits the stack to what is affordable).</summary>
-    int Affordable(Market m, ItemInstance item, int wanted, bool sell, Trader terms, int holderFaction, long money)
-    {
-        for (int n = wanted; n > 0; n--)
-            if (Price(m, item, n, sell, terms, holderFaction) <= money) return n;
-        return 0;
-    }
-
     // Containers move whole: stack copies intentionally omit Contents. Transfer validates the destination before changing either inventory.
-    static int TransferContainer(Inventory from, InventoryItemToken token, Inventory into, string? section, int x, int y, bool equip, CharacterCold? wearer)
+    static bool TransferContainer(Inventory from, InventoryItemToken token, Inventory into, bool equip, CharacterCold? wearer)
     {
-        if (section is not (null or "main" or "backpack_attach")) return 0;
-        if (section == "backpack_attach") return InventoryCommands.Transfer(from, token, into, section, 0, 0, wearer: wearer) ? 1 : 0;
-        if (equip && InventoryCommands.Transfer(from, token, into, "backpack_attach", 0, 0, wearer: wearer)) return 1;
-        if (section == "main" && InventoryCommands.Transfer(from, token, into, section, x, y)) return 1;
+        if (equip && InventoryCommands.Transfer(from, token, into, "backpack_attach", 0, 0, wearer: wearer)) return true;
         var item = Find(from, token);
-        return item is not null && into.FindCell("main", item.Width, item.Height, out int cx, out int cy)
-            && InventoryCommands.Transfer(from, token, into, "main", cx, cy) ? 1 : 0;
-    }
-
-    bool IsBuyback(ItemInstance item, bool sell) => item.Buyback is { } r && ReferenceEquals(r.Session, session) && r.Sell == sell;
-
-    long Price(Market market, ItemInstance item, int units, bool sell, Trader terms, int holder) => IsBuyback(item, sell)
-        ? item.Buyback!.Price(units) : market.StackPrice(item.WithQuantity(units), sell, terms, holder);
-
-    TradeReceipt? Receipt(Market market, ItemInstance item, int units, bool sell, Trader terms, int holder)
-    {
-        if (IsBuyback(item, sell)) return null;
-        var coins = new long[units];
-        long previous = 0;
-        for (int n = 1; n <= units; n++)
-        {
-            long total = Price(market, item, n, sell, terms, holder);
-            coins[n - 1] = total - previous;
-            previous = total;
-        }
-        return new(session, !sell, coins);
+        return item is not null && into.FindCell("main", item.Width, item.Height, out int cx, out int cy) && InventoryCommands.Transfer(from, token, into, "main", cx, cy);
     }
 
     /// <summary>
-    /// Puts the units at the cell they were dropped on (the trade window's <c>placeItemFromMouse</c>): the cell of <paramref name="section"/> in <paramref name="root"/> (the backpack's
-    /// contents for <c>backpack_content</c>) when the footprint is inside the grid, free and the stack within the limit; otherwise wherever they fit, as <see cref="Place"/>.
+    /// The price of the first <paramref name="units"/> of <paramref name="item"/>, as split off it (their traded count: all of the item's for the whole of it, else at most
+    /// <paramref name="units"/> of it, <see cref="ItemInstance.MoveTraded"/>): with no count, the stack's price; with one, the stack's price in the opposite direction, but
+    /// (<paramref name="mixed"/>: the drop <c>FUN_140715560</c>, not the right click <c>RClickAutoTrade</c>, <b>Verified</b>) a count below the units prices the rest at this
+    /// direction's unit value and the counted ones at the opposite's, less the opposite value's shortfall of the partly used unit.
     /// </summary>
-    static int PlaceAt(Inventory root, ItemInstance copy, int units, string section, int x, int y)
+    long Price(Market market, ItemInstance item, int units, bool sell, Trader terms, int holder, bool mixed = true)
     {
-        var grid = section == "main" ? root : section == "backpack_content" ? root.Backpack?.Contents : null;
-        if (grid is not null && x >= 0 && y >= 0 && x + copy.Width <= grid.Width && y + copy.Height <= grid.Height && units <= grid.LimitOf(copy)
-            && grid.IsFree(section, x, y, copy.Width, copy.Height))
+        bool whole = units >= item.Quantity;
+        var stack = whole ? item : item.WithQuantity(units);
+        int traded = whole ? item.Traded : Math.Min(item.Traded, units);
+        if (traded == 0 || !mixed || traded >= units) return market.StackPrice(stack, traded == 0 ? sell : !sell, terms, holder);
+        long normal = market.UnitPrice(stack, sell, terms, holder), opposite = market.UnitPrice(stack, !sell, terms, holder);
+        // In the original's float order: multiplied by the charges first, divided by the full charge after.
+        int shortfall = stack.MaxCharges > 0 ? (int)((float)opposite - (float)opposite * stack.Charges / stack.MaxCharges) : 0;
+        return normal * (units - traded) + traded * opposite - shortfall;
+    }
+
+    /// <summary>Puts the units at a cell of the grid when it is free and inside it (the window's <c>_addItem</c> at an item's old cell), otherwise wherever they fit (<see cref="Place"/>).</summary>
+    static int PlaceAt(Inventory grid, ItemInstance copy, int units, int x, int y)
+    {
+        if (x >= 0 && y >= 0 && x + copy.Width <= grid.Width && y + copy.Height <= grid.Height && grid.IsFree("main", x, y, copy.Width, copy.Height))
         {
-            copy.Section = section;
-            copy.X = x;
-            copy.Y = y;
+            (copy.Section, copy.X, copy.Y) = ("main", x, y);
             grid.Items.Add(copy);
             return units;
         }
-        return Place(root, copy, units);
+        return Place(grid, copy, units);
     }
 
     internal static int Place(Inventory into, ItemInstance copy, int units)
@@ -717,8 +948,34 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
 
     static string Units(int n, string name) => n == 1 ? name : $"{n} x {name}";
 
-    /// <summary>A bag trades only empty (engine choice; its contents would go unpriced and unchecked for theft).</summary>
-    internal const string BagNotEmpty = "That bag isn't empty.";
+    /// <summary>
+    /// The units a right-click trade moves (<c>RClickAutoTrade</c>, <c>FUN_140714a20</c>, <b>Verified</b>), taken before it is priced: the whole item moves itself, its lock and damage with
+    /// it; part of a stack is a split-off unit (<c>copyItem</c>) that keeps the stack's partly used charge (<see cref="Refilled"/>) and takes its traded count first.
+    /// </summary>
+    static (ItemInstance Part, bool Whole) Split(ItemInstance item, int units)
+    {
+        if (units >= item.Quantity) return (item.Moved(), true);
+        var part = item.WithQuantity(units);
+        ItemInstance.MoveTraded(item, part, units);
+        item.Quantity -= units;
+        return (part, false);
+    }
+
+    /// <summary>The stack left behind by a right-click trade of part of it is full again (<c>Item::resetCharges</c>, <c>FUN_14075d570</c>, <b>Verified</b>).</summary>
+    static void Refilled(ItemInstance rest)
+    {
+        if (rest.Quantity > 0 && rest.MaxCharges > 0) rest.Charges = rest.MaxCharges;
+    }
+
+    /// <summary>
+    /// An item stolen from the shop's faction is the shop's own again where it goes in through an inventory's add, which clears an owner of the receiving inventory's faction
+    /// (<c>InventorySection::addItem</c>, <c>FUN_14074c8b0</c>, <b>Verified</b>): a right-click sale's item in the window and every copy into the stock, not an item dropped on the
+    /// window (<c>placeItemFromMouse</c> adds with <c>_addItem</c>, which keeps it).
+    /// </summary>
+    static void Owned(ItemInstance item, Shop shop)
+    {
+        if (item.StolenFrom >= 0 && item.StolenFrom == shop.Terms.Faction) item.Mark = StolenMark.None;
+    }
 
     TradeView Publish(World world, int c, int t, Shop shop)
     {
@@ -728,20 +985,16 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
         float thievery = cold.Stats?[StatsEnumerated.Thieving] ?? 0;
         TradeItemView View(ItemInstance item, int index, bool sell, int holder)
         {
+            // The tooltip's Value and Sell value are one unit's plain prices, a buyback or not (FUN_14079e7a0).
             long value = m.UnitPrice(item, false, shop.Terms, holder), sellValue = m.UnitPrice(item, true, shop.Terms, holder);
-            bool buyback = IsBuyback(item, sell);
-            if (buyback)
-            {
-                if (sell) sellValue = Price(m, item, 1, true, shop.Terms, holder);
-                else value = Price(m, item, 1, false, shop.Terms, holder);
-            }
+            bool buyback = item.Traded != 0;
             bool stolen = item.IsStolenFor(holder, data);
             // The roll's own odds feed the hover box, the sale prompt and the roll alike; only where the shop would roll on the item at all.
             float? odds = sell && stolen && Fences(item, squad, shop.Terms) ? FenceOdds(world, thievery, item, c, t, squad, shop.Terms) : null;
             return new(index, item.Record, item.Name, item.Section, item.X, item.Y, item.Width, item.Height, item.Quantity,
                 item.Quality, Price(m, item, item.Quantity, sell, shop.Terms, holder), Price(m, item, 1, sell, shop.Terms, holder), stolen)
             {
-                Buyback = buyback, Container = item.Contents is not null,
+                Buyback = buyback, BuybackUnits = item.Traded, Container = item.Contents is not null,
                 Material = item.MaterialId, Colour = item.ColourId, Charge = item.ChargeFraction, Value = value, SellValue = sellValue, Weight = item.Weight, PriceFactor = m.TraderFactor(item, shop.Terms, holder),
                 MarketFactor = m.MarketFactor(shop.Terms.Site, item.Record), Company = item.CompanyId, Level = item.Level, Charges = item.Charges, MaxCharges = item.MaxCharges, StolenFrom = stolen ? item.StolenFrom : -1, Unique = item.Unique,
                 FenceChance = odds is { } shown ? Math.Clamp(shown, 0, 1) : null,
@@ -749,10 +1002,11 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
                 Illegal = sell && (uint)shop.Terms.Site < (uint)data.SiteFactions.Count && m.FactionCulture(data.SiteFactions[shop.Terms.Site]) is { } culture && culture.Illegal.Contains(item.Record),
             };
         }
-        // Only the stock grid's own items, at their All() indices (which tokens use): a bag's contents are not loose stock.
-        var stock = new List<TradeItemView>(shop.Stock.Items.Count);
+        // Only the window's own items, at their All() indices (which tokens use): a bag's contents are not loose stock.
+        var shown = DisplayOf(world, shop);
+        var stock = new List<TradeItemView>(shown.Items.Count);
         int at = 0;
-        foreach (var item in shop.Stock.Items)
+        foreach (var item in shown.Items)
         {
             stock.Add(View(item, at, false, squad.Faction));
             at += 1 + (item.Contents?.All().Count() ?? 0);
@@ -765,6 +1019,6 @@ public sealed class TradeSystem : ITickSystem, ITradeSource
             { From.Holder: ItemHolder.Character } h when h.From.Character == customer => View(h.Item, -1, true, cold.Faction),
             _ => null,
         };
-        return new TradeView(customer, trader, world.Characters.Cold(t)!.Name, squad.Money, world.Player.Money, shop.Stock.Width, shop.Stock.Height, stock, goods, shop.Terms.BuysStolen, shop.Terms.BuysIllegal) { Held = held, Unused = shop.UnusedCells };
+        return new TradeView(customer, trader, world.Characters.Cold(t)!.Name, squad.Money, world.Player.Money, shown.Width, shown.Height, stock, goods, shop.Terms.BuysStolen, shop.Terms.BuysIllegal) { Held = held };
     }
 }

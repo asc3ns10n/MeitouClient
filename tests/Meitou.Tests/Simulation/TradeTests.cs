@@ -101,6 +101,237 @@ public class TradeTests
         Assert.Equal((Shop.Width, Shop.Height), (new Shop { Terms = shop.Terms }.Stock.Width, new Shop { Terms = shop.Terms }.Stock.Height));
     }
 
+    [Fact]
+    public void A_building_shops_window_shows_a_packed_copy_of_its_stock_and_a_buy_takes_the_units_off_the_stock()
+    {
+        using var b = new Bazaar();
+        var hero = b.Spawn("hero", Vector2.Zero, b.Data.PlayerFaction, true);
+        var shopkeeper = b.Spawn("shopkeeper", new Vector2(10, 0), b.Data.FactionIndex("f-t"), false, "bshop-t");
+        TownFixture Box(string id) => new(id, "box", false, Vector3.Zero, 0) { Function = TownBuildings.GeneralStorageFunction, StorageWidth = 10, StorageHeight = 10 };
+        b.SquadOf(shopkeeper).HomeBuilding = new TownBuilding("shop", "shop", "Shop", Vector3.Zero, 0, true, false, []) { Fixtures = [Box("a"), Box("b")] };
+        b.World.RunTicks(1);
+        var shop = b.SquadOf(shopkeeper).Shop!;
+        // The two containers' rectangles lie one above the other (18 wide): a unit of better cloth in the first, a stack on the second one's bottom row.
+        shop.Stock.Items.Clear();
+        var better = b.Data.Items.Create("cloth-t", 1)!;
+        better.Quality = 0.9f;
+        shop.Stock.Items.Add(better);
+        var cloth = b.Data.Items.Create("cloth-t", 5)!;
+        (cloth.X, cloth.Y) = (0, 19);
+        shop.Stock.Items.Add(cloth);
+
+        b.Say(new OpenTrade(hero, shopkeeper) { Tick = 0 });
+        b.World.RunTicks(2);
+        // One grid 18 wide, as tall as the containers' 200 cells take, the copies joined (quality is not compared) and arranged to its top.
+        Assert.Equal((18, 12), (b.View.StockWidth, b.View.StockHeight));
+        var shown = Assert.Single(b.View.Stock);
+        Assert.Equal((0, 0, 6), (shown.X, shown.Y, shown.Quantity));
+
+        // A buy takes the units off the stock itself, off its first items of the same record, maker and material (FUN_140952a70): the better unit, then one of the stack.
+        b.Say(new BuyItem(shown.Token, 2) { Tick = 0 });
+        b.World.RunTicks(1);
+        Assert.Same(cloth, Assert.Single(shop.Stock.Items));
+        Assert.Equal(4, cloth.Quantity);
+        Assert.Equal(4, Assert.Single(b.View.Stock).Quantity);
+
+        // The stock changed other than through the window (a shopper took the rest): the window shows it until a restock, as the original's.
+        shop.Stock.Items.Clear();
+        b.World.RunTicks(1);
+        Assert.Equal(4, Assert.Single(b.View.Stock).Quantity);
+    }
+
+    [Fact]
+    public void Dragging_off_a_shops_window_buys_off_the_stock_and_dropping_onto_it_sells_a_copy_into_it()
+    {
+        using var b = new Bazaar();
+        var hero = b.Spawn("hero", Vector2.Zero, b.Data.PlayerFaction, true);
+        var shopkeeper = b.Spawn("shopkeeper", new Vector2(10, 0), b.Data.FactionIndex("f-t"), false, "shop-t");
+        b.World.RunTicks(1);
+        var shop = b.SquadOf(shopkeeper).Shop!;
+        shop.Stock.Items.Clear();
+        var cloth = b.Data.Items.Create("cloth-t", 5)!;
+        cloth.Mark = StolenMark.OfFaction(b.Data.FactionIndex("f-t"));
+        shop.Stock.Items.Add(cloth);
+        b.Say(new OpenTrade(hero, shopkeeper) { Tick = 0 });
+        b.World.RunTicks(2);
+        InventoryItemToken Pocket(int i) { var item = b.Bag(hero).Items[i]; return new(i, item.Record, item.Section, item.X, item.Y, item.Quantity, item.Quality); }
+        void Drag(ItemOwner from, InventoryItemToken item, bool whole, ItemOwner into, int x, int y)
+        {
+            b.Say(new LiftItem(hero, from, item, whole) { Tick = 0 });
+            b.Say(new PlaceHeld(into, "main", x, y) { Tick = 0 });
+            b.World.RunTicks(1);
+        }
+
+        TradeItemView At(int x, int y) => b.View.Stock.Single(i => (i.X, i.Y) == (x, y));
+
+        // Two of the hero's own sold, one onto an empty cell and one onto it: the window keeps them where dropped (traded), the stock new copies, which join its own stack (marked
+        // as stolen from the shop's faction, which in the shop's stock is not stolen, isStolen). The second drop takes the window's one off it (a unit off the stock) and adds the
+        // joined two.
+        b.Bag(hero).Items.Add(b.Data.Items.Create("cloth-t", 2)!);
+        long before = b.World.Player.Money;
+        Drag(ItemOwner.Of(hero), Pocket(0), false, ItemOwner.Stock, 10, 10);
+        Drag(ItemOwner.Of(hero), Pocket(0), false, ItemOwner.Stock, 10, 10);
+        Assert.Equal(2, At(10, 10).Quantity);
+        Assert.Equal([7], shop.Stock.Items.Select(i => i.Quantity));
+        Assert.Equal((true, 2), (At(10, 10).Buyback, At(10, 10).BuybackUnits));
+
+        // Bought back at the sell value (the traded units' opposite direction): two units leave the stock, off the first item of their kind.
+        Drag(ItemOwner.Stock, At(10, 10).Token, true, ItemOwner.Of(hero), 0, 0);
+        Assert.Equal(before, b.World.Player.Money);
+        Assert.Equal([5], shop.Stock.Items.Select(i => i.Quantity));
+
+        // One unit into the pockets, then one onto it: bought off the window and the stock, and not stolen (the window shows copies with no owner).
+        Drag(ItemOwner.Stock, At(0, 0).Token, false, ItemOwner.Of(hero), 5, 0);
+        Drag(ItemOwner.Stock, At(0, 0).Token, false, ItemOwner.Of(hero), 5, 0);
+        Assert.Equal(3, shop.Stock.Items.Sum(i => i.Quantity));
+        Assert.Equal(3, At(0, 0).Quantity);
+        var bought = b.Bag(hero).Items.Single(i => i.X == 5);
+        Assert.Equal((2, StolenMark.None), (bought.Quantity, bought.Mark));
+
+        // The rest as a whole stack.
+        Drag(ItemOwner.Stock, At(0, 0).Token, true, ItemOwner.Of(hero), 5, 0);
+        Assert.Empty(shop.Stock.Items);
+        Assert.Empty(b.View.Stock);
+        Assert.Equal(5, b.Bag(hero).Items.Single(i => i.X == 5).Quantity);
+    }
+
+    [Theory]
+    [InlineData(3, 4, 7, 0)]     // room for all: the held stack takes the other in, at the drop's cell
+    [InlineData(15, 18, 20, 13)] // too many: the held stack takes what it can, and the rest of the other goes onto the mouse
+    [InlineData(3, 20, 20, 3)]   // a full stack under it: the two quantities swap
+    public void A_stack_dropped_onto_one_of_its_kind_takes_it_in_and_hands_back_what_is_left(int held, int under, int placed, int mouse)
+    {
+        using var b = new Bazaar();
+        var hero = b.Spawn("hero", Vector2.Zero, b.Data.PlayerFaction, true);
+        b.World.RunTick();
+        ItemInstance Cloth(int n, int x, float quality)
+        {
+            var i = b.Data.Items.Create("cloth-t", n)!;
+            (i.X, i.Quality) = (x, quality);
+            return i;
+        }
+        b.Bag(hero).Items.Add(Cloth(held, 0, 0.5f));
+        b.Bag(hero).Items.Add(Cloth(under, 4, 0.9f));
+        b.Say(new LiftItem(hero, ItemOwner.Of(hero), new(0, "cloth-t", "main", 0, 0, held, 0.5f), true) { Tick = 0 });
+        b.Say(new PlaceHeld(ItemOwner.Of(hero), "main", 4, 0) { Tick = 0 });
+        b.World.RunTick();
+        // FUN_140715560: the stack at the drop's cell is the held one (its quality); what the mouse holds after is the one that was under it, from its cell.
+        var at = b.Bag(hero).Items.Single(i => i.X == 4);
+        Assert.Equal((placed, 0.5f), (at.Quantity, at.Quality));
+        Assert.Equal((mouse, mouse > 0 ? 4 : 0), (b.World.Player.Held?.Item.Quantity ?? 0, b.World.Player.Held?.X ?? 0));
+    }
+
+    [Fact]
+    public void An_item_held_off_a_shops_window_goes_back_into_the_stock_and_survives_a_restock()
+    {
+        using var b = new Bazaar();
+        var hero = b.Spawn("hero", Vector2.Zero, b.Data.PlayerFaction, true);
+        var shopkeeper = b.Spawn("shopkeeper", new Vector2(10, 0), b.Data.FactionIndex("f-t"), false, "shop-t");
+        b.World.RunTicks(1);
+        var shop = b.SquadOf(shopkeeper).Shop!;
+        b.SquadOf(shopkeeper).Leader = shopkeeper;   // the window is remade on a restock of its trader's squad when the trader leads it
+        shop.Stock.Items.Clear();
+        shop.Stock.Items.Add(b.Data.Items.Create("cloth-t", 5)!);
+        b.Say(new OpenTrade(hero, shopkeeper) { Tick = 0 });
+        b.World.RunTicks(2);
+
+        // Lifted, it leaves the stock; put back (its old cell is free), it is in the stock again.
+        b.Say(new LiftItem(hero, ItemOwner.Stock, Assert.Single(b.View.Stock).Token, true) { Tick = 0 });
+        b.World.RunTick();
+        Assert.Empty(shop.Stock.Items);
+        b.Say(new ReturnHeld() { Tick = 0 });
+        b.World.RunTick();
+        Assert.Null(b.World.Player.Held);
+        Assert.Equal(5, Assert.Single(b.View.Stock).Quantity);
+        Assert.Equal(5, shop.Stock.Items.Sum(i => i.Quantity));
+
+        b.Say(new LiftItem(hero, ItemOwner.Stock, Assert.Single(b.View.Stock).Token, true) { Tick = 0 });
+        b.World.RunTick();
+        int fills = shop.Fills;
+        shop.NextRestockTick = 0;
+        b.World.RunTicks(new TradeSettings().CheckEveryTicks);
+        Assert.NotEqual(fills, shop.Fills);
+
+        // Still on the mouse, and bought when dropped into the pockets.
+        Assert.Equal(("cloth-t", 5), (b.World.Player.Held?.Item.Record, b.World.Player.Held?.Item.Quantity));
+        long before = b.World.Player.Money;
+        b.Say(new PlaceHeld(ItemOwner.Of(hero), "main", 0, 0) { Tick = 0 });
+        b.World.RunTick();
+        Assert.Null(b.World.Player.Held);
+        Assert.Equal(5, Assert.Single(b.Bag(hero).Items).Quantity);
+        Assert.True(b.World.Player.Money < before);
+    }
+
+    [Fact]
+    public void The_arrange_sort_orders_ties_as_the_originals_std_sort()
+    {
+        // 40 items whose longest sides run 1, 4, 3, 2 over and over, sorted longest first (mode 0); the expected order is the original exe's sort run on the same input.
+        int Side(int id) => id * 7 % 4 + 1;
+        var ids = Enumerable.Range(0, 40).ToArray();
+        ArrangeSort.Sort(ids, (a, b) => Side(a) > Side(b));
+        Assert.Equal([1, 5, 17, 9, 13, 21, 25, 29, 33, 37, 2, 6, 10, 18, 14, 22, 26, 30, 34, 38, 39, 3, 19, 7, 11, 15, 23, 27, 31, 35, 12, 24, 32, 16, 0, 4, 36, 28, 8, 20], ids);
+    }
+
+    [Fact]
+    public void A_stack_the_window_grows_for_while_it_is_made_shows_its_count_twice_less_one_as_the_original()
+    {
+        FcsRecord Box(string id, int w, int h, int stack = 1) => Rec(id, FcsRecordType.ITEM, r =>
+        {
+            r.Ints["value"] = 10; r.Ints["stackable"] = stack; r.Ints["inventory footprint width"] = w; r.Ints["inventory footprint height"] = h;
+        });
+        using var b = new Bazaar(Box("small-t", 6, 6), Box("tall-t", 6, 12), Box("wide-t", 12, 6), Box("big-t", 12, 12, 10));
+        var hero = b.Spawn("hero", Vector2.Zero, b.Data.PlayerFaction, true);
+        var shopkeeper = b.Spawn("shopkeeper", new Vector2(10, 0), b.Data.FactionIndex("f-t"), false, "shop-t");
+        b.World.RunTicks(1);
+        var shop = b.SquadOf(shopkeeper).Shop!;
+        shop.Stock.Items.Clear();
+        // The stock's 18 x 18 tiled whole; added in this order where each first fits, the window has no room left for the big stack and grows for it.
+        foreach (var (id, n, x, y) in new[] { ("small-t", 1, 0, 12), ("tall-t", 1, 0, 0), ("wide-t", 1, 6, 0), ("big-t", 3, 6, 6) })
+        {
+            var item = b.Data.Items.Create(id, n)!;
+            (item.X, item.Y) = (x, y);
+            shop.Stock.Items.Add(item);
+        }
+        b.Say(new OpenTrade(hero, shopkeeper) { Tick = 0 });
+        b.World.RunTicks(2);
+        // The retry adds the copy's count again (FUN_140954ba0, FUN_14074c8b0): 2 x 3 - 1.
+        Assert.Equal(5, b.View.Stock.Where(i => i.Record == "big-t").Sum(i => i.Quantity));
+        Assert.Equal(3, shop.Stock.Items.Single(i => i.Record == "big-t").Quantity);
+    }
+
+    [Fact]
+    public void Arranging_the_window_keeps_the_first_pass_when_a_stack_joins_another_whole()
+    {
+        FcsRecord Box(string id, int w, int h) => Rec(id, FcsRecordType.ITEM, r =>
+        {
+            r.Ints["value"] = 10; r.Ints["stackable"] = 1; r.Ints["inventory footprint width"] = w; r.Ints["inventory footprint height"] = h;
+        });
+        using var b = new Bazaar(Box("rod-t", 1, 4), Box("crate-t", 3, 3));
+        var hero = b.Spawn("hero", Vector2.Zero, b.Data.PlayerFaction, true);
+        var shopkeeper = b.Spawn("shopkeeper", new Vector2(10, 0), b.Data.FactionIndex("f-t"), false, "shop-t");
+        b.World.RunTicks(1);
+        var shop = b.SquadOf(shopkeeper).Shop!;
+        shop.Stock.Items.Clear();
+        shop.Stock.Items.Add(b.Data.Items.Create("rod-t")!);
+        shop.Stock.Items.Add(b.Data.Items.Create("crate-t")!);
+        b.Bag(hero).Items.Add(b.Data.Items.Create("cloth-t", 2)!);
+        b.Say(new OpenTrade(hero, shopkeeper) { Tick = 0 });
+        b.World.RunTicks(2);
+        // Two units sold onto two free cells of the window lie there as two stacks.
+        foreach (int x in new[] { 10, 12 })
+        {
+            b.Say(new LiftItem(hero, ItemOwner.Of(hero), b.View.Goods.Single(i => i.Record == "cloth-t").Token, false) { Tick = 0 });
+            b.Say(new PlaceHeld(ItemOwner.Stock, "main", x, 10) { Tick = 0 });
+            b.World.RunTick();
+        }
+        Assert.Equal(2, b.View.Stock.Count(i => i.Record == "cloth-t"));
+        // The first pass (longest side first) adds them all, the second stack joining the first whole, so it is kept: the rod first, at the corner (FUN_140749d30).
+        b.Say(new ArrangeStock() { Tick = 0 });
+        b.World.RunTick();
+        Assert.Equal(2, Assert.Single(b.View.Stock, i => i.Record == "cloth-t").Quantity);
+        Assert.Equal((0, 0), b.View.Stock.Where(i => i.Record == "rod-t").Select(i => (i.X, i.Y)).Single());
+    }
+
     sealed class Bazaar : IDisposable
     {
         public PopulationData Data { get; }
@@ -112,7 +343,7 @@ public class TradeTests
             Data = TradeTests.Data([.. Shops, .. extra]);
             Trade = new TradeSystem(Data);
             var ground = new OpenGroundWalkability((_, _) => 150);   // above the water line
-            World = new SimWorld(new WorldSettings { Seed = 3 }, ground, [new MovementSystem(new PathService(ground, true)), Trade]);
+            World = new SimWorld(new WorldSettings { Seed = 3 }, ground, [new PlayerSystem(Data), new MovementSystem(new PathService(ground, true)), Trade]);
             World.Player.Faction = Data.PlayerFaction;
             World.Player.Money = 1000;
         }
@@ -161,7 +392,8 @@ public class TradeTests
 
         // Buy one unit of the first stack: its unit price leaves the purse and enters the shop's.
         var first = view.Stock[0];
-        b.Say(new BuyItem(first.Token, 1) { Tick = 0, Section = "main", X = 3, Y = 2 });   // dropped on a pocket cell
+        b.Say(new LiftItem(hero, ItemOwner.Stock, first.Token, false) { Tick = 0 });
+        b.Say(new PlaceHeld(ItemOwner.Of(hero), "main", 3, 2) { Tick = 0 });   // dropped on a pocket cell
         b.World.RunTicks(1);
         Assert.Equal(1000 - first.UnitPrice, b.World.Player.Money);
         Assert.Equal(3500 + first.UnitPrice, b.SquadOf(shopkeeper).Money);
@@ -169,11 +401,13 @@ public class TradeTests
 
         // Sell it back: the sell price (a trade item at full price, junk at half).
         var mine = b.View.Goods.Single();
-        b.Say(new SellItem(mine.Token, 1) { Tick = 0, X = 11, Y = 17 });   // dropped on the stock's last row
+        b.Say(new LiftItem(hero, ItemOwner.Of(hero), mine.Token, true) { Tick = 0 });
+        b.Say(new PlaceHeld(ItemOwner.Stock, "main", 11, 17) { Tick = 0 });   // dropped on the stock's last row
         b.World.RunTicks(1);
         Assert.Equal(1000 - first.UnitPrice + mine.Price, b.World.Player.Money);
         Assert.Empty(b.Bag(hero).All());
-        Assert.Contains(shop.Stock.Items, i => (i.X, i.Y) == (11, 17));
+        Assert.Contains(b.View.Stock, i => (i.X, i.Y) == (11, 17) && i.Record == mine.Record);   // the window keeps it where it was dropped
+        Assert.Equal(units, shop.Stock.All().Sum(i => i.Quantity));   // and a copy of it is back in the stock
 
         // Too poor: nothing moves.
         b.World.Player.Money = 0;
@@ -197,9 +431,9 @@ public class TradeTests
     });
 
     [Theory]
-    [InlineData(null, true)]
-    [InlineData("main", false)]
-    public void A_backpack_trades_whole_and_only_when_empty(string? section, bool equip)
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_backpack_bought_is_an_empty_copy_and_one_sold_goes_whole_with_its_contents(bool drag)
     {
         using var b = new Bazaar(BackpackRecord());
         var hero = b.Spawn("hero", Vector2.Zero, b.Data.PlayerFaction, true);
@@ -208,43 +442,48 @@ public class TradeTests
         var shop = b.SquadOf(trader).Shop!;
         shop.Stock.Items.Clear();
         var bag = b.Data.Items.Create("bag-t")!;
-        var contents = bag.Contents!;
-        Assert.True(contents.Add(b.Data.Items.Create("ration-t")!));
+        Assert.True(bag.Contents!.Add(b.Data.Items.Create("ration-t")!));
         Assert.True(shop.Stock.Add(bag));
         b.Say(new OpenTrade(hero, trader) { Tick = 0 }); b.World.RunTicks(2);
         long playerMoney = b.World.Player.Money, shopMoney = b.SquadOf(trader).Money;
-        // Its contents are not loose stock, and a bag with something in it is not traded either way.
+        // Its contents are not loose stock; the window's bag is an empty copy, and buying it takes the stock's bag, contents and all.
         var stock = Assert.Single(b.View.Stock);
-        b.Say(new BuyItem(stock.Token, 1) { Tick = 0, Section = section, X = 2, Y = 3, Equip = equip }); b.World.RunTick();
-        Assert.Same(bag, Assert.Single(shop.Stock.Items));
-        Assert.Equal(playerMoney, b.World.Player.Money);
-        contents.Items.Clear(); b.World.RunTick();
-        stock = Assert.Single(b.View.Stock);
-        b.Say(new BuyItem(stock.Token, 1) { Tick = 0, Section = section, X = 2, Y = 3, Equip = equip }); b.World.RunTick();
-        Assert.Same(bag, Assert.Single(b.Bag(hero).Items)); Assert.Same(contents, bag.Contents);
-        Assert.Equal(section == "main" ? "main" : "backpack_attach", bag.Section);
-        if (section == "main") Assert.Equal((2, 3), (bag.X, bag.Y));
+        if (drag)
+        {
+            b.Say(new LiftItem(hero, ItemOwner.Stock, stock.Token, true) { Tick = 0 });
+            b.Say(new PlaceHeld(ItemOwner.Of(hero), "main", 2, 3) { Tick = 0 });
+        }
+        else b.Say(new BuyItem(stock.Token, 1) { Tick = 0, Equip = true });
+        b.World.RunTick();
+        var bought = Assert.Single(b.Bag(hero).Items);
+        var contents = bought.Contents!;
+        Assert.Empty(contents.Items);
+        Assert.Equal(drag ? "main" : "backpack_attach", bought.Section);
+        if (drag) Assert.Equal((2, 3), (bought.X, bought.Y));
         Assert.Empty(shop.Stock.All());
         Assert.Equal(playerMoney - stock.Price, b.World.Player.Money);
+        // With something in it, it sells whole, contents and all (only a container refuses a bag that is not empty): traded, for what it cost; the stock gets an empty copy.
         Assert.True(contents.Add(b.Data.Items.Create("ration-t")!)); b.World.RunTick();
-        b.Say(new SellItem(b.View.Goods.Single(i => i.Record == "bag-t").Token, 1) { Tick = 0 }); b.World.RunTick();
-        Assert.Same(bag, Assert.Single(b.Bag(hero).Items));
-        Assert.Equal(playerMoney - stock.Price, b.World.Player.Money);
-        // Emptied, it sells back for exactly what it cost (buyback).
-        contents.Items.Clear(); b.World.RunTick();
         var goods = b.View.Goods.Single(i => i.Record == "bag-t");
         Assert.True(goods.Buyback);
         b.Say(new SellItem(goods.Token, 1) { Tick = 0 }); b.World.RunTick();
-        Assert.Empty(b.Bag(hero).All()); Assert.Same(bag, Assert.Single(shop.Stock.Items)); Assert.Same(contents, bag.Contents);
+        Assert.Empty(b.Bag(hero).All());
+        var copy = Assert.Single(shop.Stock.Items);
+        Assert.NotSame(contents, copy.Contents);
+        Assert.Empty(copy.Contents!.Items);
         Assert.Equal(playerMoney, b.World.Player.Money);
         Assert.Equal(shopMoney, b.SquadOf(trader).Money);
+        // Bought back off the window, it comes with what is in it.
+        b.Say(new BuyItem(Assert.Single(b.View.Stock).Token, 1) { Tick = 0, Equip = true }); b.World.RunTick();
+        Assert.Same(contents, Assert.Single(b.Bag(hero).Items).Contents);
+        Assert.Single(contents.Items);
     }
 
     [Theory]
     [InlineData(true, false)]
     [InlineData(false, false)]
     [InlineData(true, true)]
-    public void Buyback_refunds_exact_coins_in_both_directions_including_partial_stacks(bool buyFirst, bool close)
+    public void Traded_units_trade_back_at_the_opposite_value_until_the_trade_closes(bool buyFirst, bool close)
     {
         using var b = new Bazaar();
         var hero = b.Spawn("hero", Vector2.Zero, b.Data.PlayerFaction, true);
@@ -253,7 +492,7 @@ public class TradeTests
         var shop = b.SquadOf(trader).Shop!; shop.Stock.Items.Clear();
         var item = b.Data.Items.Create("ration-t")!;
         item.Quantity = 4;
-        item.Charges = 37; // Fractional charges and integer rounding must not create or lose coins on undo.
+        if (buyFirst) item.Charges = 37;   // the window's copies are full, so the bought units are
         Assert.True((buyFirst ? shop.Stock : b.Bag(hero)).Add(item));
         Assert.True((buyFirst ? b.Bag(hero) : shop.Stock).Add(b.Data.Items.Create("ration-t")!));
         b.Say(new OpenTrade(hero, trader) { Tick = 0 }); b.World.RunTicks(2);
@@ -261,14 +500,13 @@ public class TradeTests
         IReadOnlyList<TradeItemView> Source() => buyFirst ? b.View.Stock : b.View.Goods;
         IReadOnlyList<TradeItemView> Target() => buyFirst ? b.View.Goods : b.View.Stock;
         SimCommand Move(TradeItemView v, int n, bool undo) => buyFirst != undo ? new BuyItem(v.Token, n) { Tick = 0 } : new SellItem(v.Token, n) { Tick = 0 };
-        // Moved one unit at a time, the units share one stack, kept apart from the plain one.
+        // Moved one unit at a time, the units join the plain stack there and are counted in the trade's buyback table.
         for (int n = 0; n < 4; n++)
         {
             b.Say(Move(Assert.Single(Source()), 1, false)); b.World.RunTick();
         }
-        var reverse = Assert.Single(Target(), v => v.Buyback);
-        Assert.Equal((4, Math.Abs(b.World.Player.Money - player)), (reverse.Quantity, reverse.Price));
-        Assert.Equal(1, Assert.Single(Target(), v => !v.Buyback).Quantity);
+        var reverse = Assert.Single(Target());
+        Assert.Equal((5, true, 4), (reverse.Quantity, reverse.Buyback, reverse.BuybackUnits));
         if (close)
         {
             b.Say(new CloseTrade { Tick = 0 }); b.World.RunTick(); Assert.Null(b.World.Snapshot.Trade);
@@ -276,14 +514,61 @@ public class TradeTests
             Assert.DoesNotContain(Target(), v => v.Buyback);
             return;
         }
-        // Undone in parts, each part quotes what was actually paid.
+        // Traded back in parts at the opposite direction's value, the counted units first: what was paid comes back.
         b.Say(Move(reverse, 1, true)); b.World.RunTick();
-        reverse = Assert.Single(Target(), v => v.Buyback);
-        Assert.Equal(3, reverse.Quantity);
+        reverse = Assert.Single(Target());
+        Assert.Equal((4, 3), (reverse.Quantity, reverse.BuybackUnits));
         b.Say(Move(reverse, 3, true)); b.World.RunTick();
         Assert.Equal(player, b.World.Player.Money);
         Assert.Equal(merchant, b.SquadOf(trader).Money);
         Assert.DoesNotContain(b.View.Stock.Concat(b.View.Goods), v => v.Buyback);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(5)]
+    public void A_stack_dropped_on_a_shop_that_affords_part_of_it_keeps_its_traded_units_on_the_mouse(int bought)
+    {
+        using var b = new Bazaar();
+        var hero = b.Spawn("hero", Vector2.Zero, b.Data.PlayerFaction, true);
+        var trader = b.Spawn("trader", new(10, 0), b.Data.FactionIndex("f-t"), false, "shop-t");
+        b.World.RunTick();
+        var shop = b.SquadOf(trader).Shop!; shop.Stock.Items.Clear();
+        Assert.True(shop.Stock.Add(b.Data.Items.Create("ration-t", bought)!));
+        if (bought < 5) Assert.True(b.Bag(hero).Add(b.Data.Items.Create("ration-t", 5 - bought)!));
+        b.Say(new OpenTrade(hero, trader) { Tick = 0 }); b.World.RunTicks(2);
+        for (int n = 0; n < bought; n++)
+        {
+            b.Say(new BuyItem(Assert.Single(b.View.Stock).Token, 1) { Tick = 0 }); b.World.RunTick();
+        }
+        var stack = Assert.Single(b.View.Goods);
+        Assert.Equal((5, bought), (stack.Quantity, stack.BuybackUnits));
+        var squad = b.SquadOf(trader);
+        long sell = b.Trade.Market(b.World).UnitPrice(b.Bag(hero).Items[0], true, shop.Terms, b.Data.PlayerFaction);
+        squad.Money = 3 * sell;
+        long purse = squad.Money, player = b.World.Player.Money;
+        b.World.TakeMessages();
+
+        // The shop can pay for three at the plain sell value, so the drop takes three, the traded units staying on the mouse first (FUN_140715560). Two traded: the three placed are
+        // plain, sold at that value. Five: the three placed are traded, priced at the higher buy value, which the shop can't pay, so the drop is refused whole.
+        b.Say(new LiftItem(hero, ItemOwner.Of(hero), stack.Token, true) { Tick = 0 });
+        b.Say(new PlaceHeld(ItemOwner.Stock, "main", 10, 10) { Tick = 0 });
+        b.World.RunTick();
+        if (bought == 2)
+        {
+            var placed = b.View.Stock.Single(i => (i.X, i.Y) == (10, 10));
+            Assert.Equal((3, 3), (placed.Quantity, placed.BuybackUnits));   // none were traded, so all three are now
+            Assert.Equal((2, 2), (b.View.Held!.Quantity, b.View.Held.BuybackUnits));
+            Assert.Equal((purse - 3 * sell, player + 3 * sell), (squad.Money, b.World.Player.Money));
+        }
+        else
+        {
+            Assert.Null(b.World.Player.Held);
+            Assert.Empty(b.View.Stock);
+            Assert.Equal((5, 5), (Assert.Single(b.View.Goods).Quantity, b.View.Goods[0].BuybackUnits));
+            Assert.Equal((purse, player), (squad.Money, b.World.Player.Money));
+            Assert.Contains("The shopkeeper can't afford that.", b.World.TakeMessages());
+        }
     }
 
     [Fact]
